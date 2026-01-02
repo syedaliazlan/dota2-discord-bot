@@ -1,0 +1,28 @@
+{
+  "name": "dota2-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot that fetches and displays Dota 2 profile data from OpenDota API and Dotabuff",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "dota2",
+    "opendota",
+    "dotabuff"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "axios": "^1.6.5",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.3"
+  }
+}
+

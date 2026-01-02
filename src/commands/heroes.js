@@ -1,0 +1,41 @@
+import { SlashCommandBuilder } from 'discord.js';
+import { logger } from '../utils/logger.js';
+
+/**
+ * /heroes command - Show hero performance
+ */
+export const heroesCommand = {
+  data: new SlashCommandBuilder()
+    .setName('heroes')
+    .setDescription('Show your top heroes by games played')
+    .addIntegerOption(option =>
+      option.setName('limit')
+        .setDescription('Number of heroes to show (default: 10)')
+        .setMinValue(1)
+        .setMaxValue(20)
+    ),
+
+  async execute(interaction, opendotaClient, dataProcessor, messageFormatter, accountId) {
+    await interaction.deferReply();
+
+    try {
+      const limit = interaction.options.getInteger('limit') || 10;
+      
+      const heroesData = await opendotaClient.getPlayerHeroes(accountId);
+
+      if (!heroesData || heroesData.length === 0) {
+        await interaction.editReply('No hero statistics available.');
+        return;
+      }
+
+      const heroes = dataProcessor.processHeroStats(heroesData);
+      const embed = messageFormatter.formatHeroes(heroes, limit);
+
+      await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+      logger.error('Error executing heroes command:', error);
+      await interaction.editReply('An error occurred while fetching hero statistics.');
+    }
+  }
+};
+
