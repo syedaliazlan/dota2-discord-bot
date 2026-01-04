@@ -10,7 +10,17 @@ export const dailyallCommand = {
     .setDescription('Show daily summary for all tracked players (last 24 hours)'),
 
   async execute(interaction, opendotaClient, dataProcessor, messageFormatter, friendsManager) {
-    await interaction.deferReply();
+    // Defer immediately to prevent interaction timeout
+    try {
+      await interaction.deferReply();
+    } catch (error) {
+      // If defer fails, interaction might be expired - log and return
+      if (error.code === 10062) {
+        logger.error('Interaction expired before deferReply could complete');
+        return;
+      }
+      throw error;
+    }
 
     try {
       if (!friendsManager) {
@@ -218,14 +228,44 @@ export const dailyallCommand = {
       // Send combined summary
       if (playerSummaries.length === 0) {
         const embed = messageFormatter.formatMultiPlayerDailySummary([]);
-        await interaction.editReply({ embeds: [embed] });
+        try {
+          await interaction.editReply({ embeds: [embed] });
+        } catch (replyError) {
+          if (replyError.code === 10062) {
+            logger.error('Interaction expired before summary could be sent');
+          } else {
+            throw replyError;
+          }
+        }
       } else {
         const embed = messageFormatter.formatMultiPlayerDailySummary(playerSummaries);
-        await interaction.editReply({ embeds: [embed] });
+        try {
+          await interaction.editReply({ embeds: [embed] });
+        } catch (replyError) {
+          if (replyError.code === 10062) {
+            logger.error('Interaction expired before summary could be sent');
+          } else {
+            throw replyError;
+          }
+        }
       }
     } catch (error) {
       logger.error('Error executing dailyall command:', error);
-      await interaction.editReply('An error occurred while generating the daily summary.');
+      
+      // Only try to reply if interaction is still valid
+      if (error.code !== 10062) {
+        try {
+          if (interaction.deferred || interaction.replied) {
+            await interaction.editReply('An error occurred while generating the daily summary.');
+          } else {
+            await interaction.reply({ content: 'An error occurred while generating the daily summary.', ephemeral: true });
+          }
+        } catch (replyError) {
+          if (replyError.code !== 10062) {
+            logger.error('Failed to send error message:', replyError);
+          }
+        }
+      }
     }
   }
 };

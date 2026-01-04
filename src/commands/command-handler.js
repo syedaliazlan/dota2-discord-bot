@@ -64,6 +64,7 @@ export class CommandHandler {
       }
 
       try {
+        // Execute command immediately - commands should call deferReply() within 3 seconds
         // Execute command with appropriate parameters
         // All commands should call deferReply() immediately to avoid timeout
         if (interaction.commandName === 'profile') {
@@ -94,6 +95,12 @@ export class CommandHandler {
       } catch (error) {
         logger.error(`Error executing command ${interaction.commandName}:`, error);
         
+        // Don't try to reply if interaction is expired (code 10062)
+        if (error.code === 10062) {
+          logger.warn(`Interaction expired for command ${interaction.commandName}`);
+          return;
+        }
+        
         const errorMessage = 'An error occurred while executing this command. Please try again.';
 
         try {
@@ -103,7 +110,10 @@ export class CommandHandler {
             await interaction.reply({ content: errorMessage, ephemeral: true });
           }
         } catch (replyError) {
-          logger.error('Failed to send error message:', replyError);
+          // Don't log if interaction is expired
+          if (replyError.code !== 10062) {
+            logger.error('Failed to send error message:', replyError);
+          }
         }
       }
     });

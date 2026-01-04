@@ -10,7 +10,16 @@ export const listfriendsCommand = {
     .setDescription('List all players in the friends list'),
 
   async execute(interaction, friendsManager) {
-    await interaction.deferReply();
+    // Defer immediately to prevent interaction timeout
+    try {
+      await interaction.deferReply();
+    } catch (error) {
+      if (error.code === 10062) {
+        logger.error('Interaction expired before deferReply could complete');
+        return;
+      }
+      throw error;
+    }
 
     try {
       if (!friendsManager) {
