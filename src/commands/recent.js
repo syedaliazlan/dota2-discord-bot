@@ -17,7 +17,16 @@ export const recentCommand = {
     ),
 
   async execute(interaction, opendotaClient, dataProcessor, messageFormatter, accountId) {
-    await interaction.deferReply();
+    // Defer immediately to prevent interaction timeout
+    try {
+      await interaction.deferReply();
+    } catch (error) {
+      if (error.code === 10062) {
+        logger.error('Interaction expired before deferReply could complete');
+        return;
+      }
+      throw error;
+    }
 
     try {
       const limit = interaction.options.getInteger('limit') || 5;

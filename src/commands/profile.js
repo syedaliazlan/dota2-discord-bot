@@ -10,7 +10,16 @@ export const profileCommand = {
     .setDescription('Display your Dota 2 profile overview'),
 
   async execute(interaction, opendotaClient, dotabuffScraper, dataProcessor, messageFormatter, accountId) {
-    await interaction.deferReply();
+    // Defer immediately to prevent interaction timeout
+    try {
+      await interaction.deferReply();
+    } catch (error) {
+      if (error.code === 10062) {
+        logger.error('Interaction expired before deferReply could complete');
+        return;
+      }
+      throw error;
+    }
 
     try {
       // Fetch data from both sources

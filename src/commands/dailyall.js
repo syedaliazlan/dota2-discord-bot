@@ -58,58 +58,18 @@ export const dailyallCommand = {
           let bestAccountId = friend.ids[0];
           let recentMatches = [];
           
-          // Helper function to validate account ID (already converted to Dota 2 Account ID)
-          const validateAccountId = async (accountId) => {
-            try {
-              logger.detail(`      → Validating account ID: ${accountId}`);
-              const playerData = await opendotaClient.getPlayer(accountId);
-              
-              if (!playerData || !playerData.profile) {
-                logger.detail(`      ✗ Invalid account ID ${accountId}: No player profile found`);
-                return { valid: false, accountId: null };
-              }
-              
-              const playerName = playerData.profile.personaname || playerData.profile.name || 'Unknown';
-              logger.detail(`      ✓ Valid account ID ${accountId}: Player name = "${playerName}"`);
-              return { valid: true, accountId: accountId };
-            } catch (error) {
-              logger.detail(`      ✗ Error validating account ID ${accountId}:`, error.message);
-              return { valid: false, accountId: null };
-            }
-          };
-          
           // For players with multiple IDs, check all accounts to find matches
           if (friend.ids.length > 1) {
             logger.detailInfo(`  Multiple accounts detected, checking all ${friend.ids.length} accounts...`);
             // Check all accounts to find the one with most matches
             let bestMatchCount = 0;
             let bestAccountMatches = [];
-            const validAccountIds = [];
             
-            // Validate all account IDs (already converted by getAllFriends)
+            // Check matches for all accounts (skip validation - if getPlayerMatches fails, account is invalid)
             for (let i = 0; i < friend.ids.length; i++) {
               const accountId = friend.ids[i]; // Already converted to Dota 2 Account ID
-              const validation = await validateAccountId(accountId);
-              if (validation.valid && validation.accountId) {
-                validAccountIds.push(validation.accountId);
-              }
-              // Rate limiting between validation checks
-              await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            
-            if (validAccountIds.length === 0) {
-              logger.detailInfo(`  ✗ No valid account IDs found for ${friend.name}`);
-              playersWithNoMatches.push(friend.name);
-              continue;
-            }
-            
-            logger.detailInfo(`  Found ${validAccountIds.length}/${friend.ids.length} valid account(s), checking matches...`);
-            
-            // Now check matches for valid accounts
-            for (let i = 0; i < validAccountIds.length; i++) {
-              const accountId = validAccountIds[i];
               try {
-                logger.detail(`    [${i + 1}/${validAccountIds.length}] Checking account ID: ${accountId}`);
+                logger.detail(`    [${i + 1}/${friend.ids.length}] Checking account ID: ${accountId}`);
                 const matchesData = await opendotaClient.getPlayerMatches(accountId, 50);
                 
                 if (!matchesData || matchesData.length === 0) {
@@ -142,25 +102,16 @@ export const dailyallCommand = {
                 await new Promise(resolve => setTimeout(resolve, 1000));
               } catch (error) {
                 logger.detail(`      ✗ Error checking account ${accountId} for ${friend.name}:`, error.message);
+                // Continue to next account
+                await new Promise(resolve => setTimeout(resolve, 1000));
               }
             }
             
             recentMatches = bestAccountMatches;
             logger.detailInfo(`  Best account: ${bestAccountId} with ${bestMatchCount} matches`);
           } else {
-            // Single account - validate first, then fetch matches (already converted by getAllFriends)
-            logger.detailInfo(`  Single account, validating ID: ${bestAccountId}`);
-            const validation = await validateAccountId(bestAccountId);
-            
-            if (!validation.valid || !validation.accountId) {
-              logger.detailInfo(`  ✗ Invalid account ID for ${friend.name}: ${bestAccountId}`);
-              playersWithNoMatches.push(friend.name);
-              continue;
-            }
-            
-            // Use the validated account ID
-            bestAccountId = validation.accountId;
-            logger.detailInfo(`  Account validated, checking matches...`);
+            // Single account - just fetch matches (skip validation)
+            logger.detailInfo(`  Single account, checking matches for ID: ${bestAccountId}`);
             try {
               const matchesData = await opendotaClient.getPlayerMatches(bestAccountId, 50);
               
