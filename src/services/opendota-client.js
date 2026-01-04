@@ -9,9 +9,10 @@ export class OpenDotaClient {
   constructor(baseUrl, apiKey = null) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
+    this.apiKeyValid = apiKey !== null && apiKey !== ''; // Track if API key is valid
     // Free tier: 60 calls/min, Premium: 3000 calls/min
     // Without key: 1 req/sec (60/min), with key: can go faster
-    this.rateLimitDelay = apiKey ? 20 : 1000; // 20ms = 50 req/sec, 1000ms = 1 req/sec
+    this.rateLimitDelay = (this.apiKeyValid) ? 20 : 1000; // 20ms = 50 req/sec, 1000ms = 1 req/sec
     this.lastRequestTime = 0;
 
     // Create axios instance with default config
@@ -43,9 +44,10 @@ export class OpenDotaClient {
   async request(endpoint, retries = 3) {
     await this.waitForRateLimit();
 
-    // Add API key as query parameter if available
+    // Add API key as query parameter if available and valid
     const separator = endpoint.includes('?') ? '&' : '?';
-    const url = this.apiKey ? `${endpoint}${separator}api_key=${this.apiKey}` : endpoint;
+    const useApiKey = this.apiKeyValid && this.apiKey;
+    const url = useApiKey ? `${endpoint}${separator}api_key=${this.apiKey}` : endpoint;
 
     for (let i = 0; i < retries; i++) {
       try {
@@ -53,6 +55,29 @@ export class OpenDotaClient {
         return response.data;
       } catch (error) {
         if (error.response) {
+          // Check for invalid API key error
+          if (error.response.status === 400 && 
+              error.response.data && 
+              typeof error.response.data === 'object' &&
+              error.response.data.error &&
+              error.response.data.error.includes('API key invalid')) {
+            // API key is invalid, disable it and retry without key
+            if (this.apiKeyValid) {
+              logger.warn('API key is invalid, falling back to free tier (no API key)');
+              this.apiKeyValid = false;
+              this.rateLimitDelay = 1000; // Switch to free tier rate limit
+              // Retry immediately without API key
+              const urlWithoutKey = endpoint;
+              try {
+                const response = await this.client.get(urlWithoutKey);
+                return response.data;
+              } catch (retryError) {
+                // If retry also fails, continue with normal error handling
+                logger.error(`API request failed after API key fallback:`, retryError.message);
+              }
+            }
+          }
+          
           // API error
           if (error.response.status === 429) {
             // Rate limited, wait longer

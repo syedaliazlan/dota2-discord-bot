@@ -278,7 +278,7 @@ export class PollingService {
         try {
           let bestAccountId = friend.ids[0];
           let recentMatches = [];
-          
+      
           // For players with multiple IDs, check all accounts to find matches
           if (friend.ids.length > 1 && this.friendsManager) {
             // Check all accounts to find the one with most matches
@@ -289,9 +289,9 @@ export class PollingService {
               try {
                 const matchesData = await this.opendotaClient.getPlayerMatches(accountId, 50);
                 const accountMatches = (matchesData || []).filter(match => 
-                  match.start_time >= twentyFourHoursAgo
-                );
-                
+        match.start_time >= twentyFourHoursAgo
+      );
+
                 if (accountMatches.length > bestMatchCount) {
                   bestMatchCount = accountMatches.length;
                   bestAccountId = accountId;
@@ -315,27 +315,27 @@ export class PollingService {
           }
           
           // Skip if no matches
-          if (recentMatches.length === 0) {
+      if (recentMatches.length === 0) {
             continue;
-          }
+      }
 
-          // Process matches to get accurate hero_id
+      // Process matches to get accurate hero_id
           const accountIdNum = parseInt(bestAccountId);
-          const processedMatches = recentMatches.map((match) => {
-            if (match.players && Array.isArray(match.players) && match.players.length > 0) {
-              const player = match.players.find(p => p.account_id === accountIdNum);
-              if (player && player.hero_id !== undefined) {
-                match.hero_id = player.hero_id;
-                match.kills = player.kills ?? match.kills;
-                match.deaths = player.deaths ?? match.deaths;
-                match.assists = player.assists ?? match.assists;
-              }
-            }
-            return match;
-          });
+      const processedMatches = recentMatches.map((match) => {
+        if (match.players && Array.isArray(match.players) && match.players.length > 0) {
+          const player = match.players.find(p => p.account_id === accountIdNum);
+          if (player && player.hero_id !== undefined) {
+            match.hero_id = player.hero_id;
+            match.kills = player.kills ?? match.kills;
+            match.deaths = player.deaths ?? match.deaths;
+            match.assists = player.assists ?? match.assists;
+          }
+        }
+        return match;
+      });
 
           // Process daily summary for this player
-          const summary = this.dataProcessor.processDailySummary(processedMatches);
+      const summary = this.dataProcessor.processDailySummary(processedMatches);
           playerSummaries.push({
             name: friend.name,
             accountId: bestAccountId,
@@ -357,7 +357,7 @@ export class PollingService {
         await this.discordBot.sendNotification(null, embed);
       } else {
         const embed = this.messageFormatter.formatMultiPlayerDailySummary(playerSummaries);
-        await this.discordBot.sendNotification(null, embed);
+      await this.discordBot.sendNotification(null, embed);
         logger.info(`Daily summary sent for ${playerSummaries.length} player(s)`);
       }
       

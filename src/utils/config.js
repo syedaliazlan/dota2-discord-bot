@@ -67,7 +67,9 @@ export function loadConfig() {
       accountId: process.env.STEAM_ACCOUNT_ID
     },
     opendota: {
-      apiKey: process.env.OPENDOTA_API_KEY || null,
+      apiKey: (process.env.OPENDOTA_API_KEY && process.env.OPENDOTA_API_KEY.trim() !== '') 
+        ? process.env.OPENDOTA_API_KEY.trim() 
+        : null,
       baseUrl: 'https://api.opendota.com/api'
     },
     polling: {
