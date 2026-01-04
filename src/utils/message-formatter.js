@@ -21,6 +21,16 @@ export class MessageFormatter {
     }
     return getHeroName(heroId); // Fallback to static mapping
   }
+
+  /**
+   * Calculate KDA ratio
+   */
+  calculateKDA(kills, deaths, assists) {
+    if (deaths === 0) {
+      return (kills + assists).toFixed(2);
+    }
+    return ((kills + assists) / deaths).toFixed(2);
+  }
   /**
    * Format player profile embed
    */
@@ -478,6 +488,48 @@ export class MessageFormatter {
     embed.addFields(playerFields);
 
     // Footer removed as requested
+
+    return embed;
+  }
+
+  /**
+   * Format rampage notification
+   */
+  formatRampageNotification(playerName, heroId, matchId, kills, deaths, assists, win, matchUrl) {
+    const embed = new EmbedBuilder()
+      .setTitle('🔥 RAMPAGE! 🔥')
+      .setDescription(`**${playerName}** just got a RAMPAGE!`)
+      .setColor(0xFF0000) // Red for rampage
+      .setTimestamp();
+
+    const heroName = this.getHeroName(heroId);
+    const kda = this.calculateKDA(kills, deaths, assists);
+    const winEmoji = win ? '✅' : '❌';
+    const winText = win ? 'Victory' : 'Defeat';
+
+    embed.addFields(
+      {
+        name: '🎮 Hero',
+        value: heroName,
+        inline: true
+      },
+      {
+        name: '⚔️ KDA',
+        value: `${kills}/${deaths}/${assists} (${kda})`,
+        inline: true
+      },
+      {
+        name: '🏆 Result',
+        value: `${winEmoji} ${winText}`,
+        inline: true
+      }
+    );
+
+    if (matchUrl) {
+      embed.setURL(matchUrl);
+    }
+
+    embed.setFooter({ text: `Match ID: ${matchId}` });
 
     return embed;
   }

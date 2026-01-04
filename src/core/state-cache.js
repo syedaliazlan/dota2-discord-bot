@@ -15,7 +15,8 @@ export class StateCache {
       achievements: null,
       lastLiveMatchId: null,
       lastDailySummary: null,
-      dailyMatches: []
+      dailyMatches: [],
+      detectedRampages: [] // Track detected rampages to avoid duplicates
     };
   }
 
@@ -180,6 +181,38 @@ export class StateCache {
    */
   set(key, value) {
     this.cache[key] = value;
+  }
+
+  /**
+   * Check if rampage was already detected
+   */
+  isRampageDetected(matchId, accountId) {
+    if (!this.cache.detectedRampages) {
+      this.cache.detectedRampages = [];
+    }
+    return this.cache.detectedRampages.some(
+      r => r.matchId === matchId && r.accountId === accountId
+    );
+  }
+
+  /**
+   * Mark rampage as detected
+   */
+  markRampageDetected(matchId, accountId, playerName) {
+    if (!this.cache.detectedRampages) {
+      this.cache.detectedRampages = [];
+    }
+    this.cache.detectedRampages.push({
+      matchId,
+      accountId,
+      playerName,
+      detectedAt: new Date().toISOString()
+    });
+    
+    // Keep only last 100 rampages to prevent cache from growing too large
+    if (this.cache.detectedRampages.length > 100) {
+      this.cache.detectedRampages = this.cache.detectedRampages.slice(-100);
+    }
   }
 }
 

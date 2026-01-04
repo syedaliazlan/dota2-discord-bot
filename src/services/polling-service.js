@@ -99,6 +99,9 @@ export class PollingService {
       // Check for new matches
       await this.checkNewMatches();
 
+      // Check for rampages
+      await this.checkRampages();
+
       // Check for stat changes
       await this.checkStatChanges();
 
@@ -178,6 +181,185 @@ export class PollingService {
       }
     } catch (error) {
       logger.error('Error checking for new matches:', error);
+    }
+  }
+
+  /**
+   * Check for rampages in last 24 hours
+   */
+  async checkRampages() {
+    try {
+      if (!this.friendsManager) {
+        // If no friends manager, only check main account
+        await this.checkRampagesForPlayer(this.accountId, 'You');
+        return;
+      }
+
+      const friends = this.friendsManager.getAllFriends();
+      const twentyFourHoursAgo = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
+
+      // Check all friends for rampages
+      for (const friend of friends) {
+        const accountId = friend.accountId;
+        const playerName = friend.name;
+
+        try {
+          // Get recent matches (last 10 should be enough to cover 24 hours)
+          const matchesData = await this.opendotaClient.getPlayerMatches(accountId, 10);
+          
+          if (!matchesData || matchesData.length === 0) {
+            continue;
+          }
+
+          // Filter matches from last 24 hours
+          const recentMatches = matchesData.filter(match => 
+            match.start_time && match.start_time >= twentyFourHoursAgo
+          );
+
+          if (recentMatches.length === 0) {
+            continue;
+          }
+
+          // Check each match for rampages
+          for (const match of recentMatches) {
+            // Skip if already detected
+            if (this.stateCache.isRampageDetected(match.match_id, accountId)) {
+              continue;
+            }
+
+            // Fetch full match details to get multi_kills
+            let fullMatch = match;
+            if (!match.players || match.players.length === 0) {
+              try {
+                fullMatch = await this.opendotaClient.getMatch(match.match_id);
+              } catch (error) {
+                logger.detail(`Failed to fetch match ${match.match_id} for rampage check:`, error.message);
+                continue;
+              }
+            }
+
+            if (!fullMatch.players || fullMatch.players.length === 0) {
+              continue;
+            }
+
+            const accountIdNum = parseInt(accountId);
+            const player = fullMatch.players.find(p => p.account_id === accountIdNum);
+            
+            if (!player) {
+              continue;
+            }
+
+            // Check for rampage (multi_kills["5"] indicates rampage)
+            const multiKills = player.multi_kills;
+            if (multiKills && typeof multiKills === 'object') {
+              const rampageCount = multiKills['5'] || 0;
+              
+              if (rampageCount > 0) {
+                // Rampage detected!
+                logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${match.match_id}`);
+                
+                // Mark as detected
+                this.stateCache.markRampageDetected(match.match_id, accountId, playerName);
+                
+                // Send notification
+                const matchUrl = `https://www.opendota.com/matches/${match.match_id}`;
+                const win = fullMatch.radiant_win === (player.player_slot < 128);
+                const embed = this.messageFormatter.formatRampageNotification(
+                  playerName,
+                  player.hero_id,
+                  match.match_id,
+                  player.kills || 0,
+                  player.deaths || 0,
+                  player.assists || 0,
+                  win,
+                  matchUrl
+                );
+                
+                await this.discordBot.sendNotification(null, embed);
+                
+                // Small delay between notifications
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+            }
+          }
+        } catch (error) {
+          logger.error(`Error checking rampages for ${playerName}:`, error.message);
+          // Continue with next friend
+        }
+      }
+    } catch (error) {
+      logger.error('Error checking for rampages:', error);
+    }
+  }
+
+  /**
+   * Check rampages for a single player (used when friendsManager is not available)
+   */
+  async checkRampagesForPlayer(accountId, playerName) {
+    try {
+      const twentyFourHoursAgo = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
+      const matchesData = await this.opendotaClient.getPlayerMatches(accountId, 10);
+      
+      if (!matchesData || matchesData.length === 0) {
+        return;
+      }
+
+      const recentMatches = matchesData.filter(match => 
+        match.start_time && match.start_time >= twentyFourHoursAgo
+      );
+
+      for (const match of recentMatches) {
+        if (this.stateCache.isRampageDetected(match.match_id, accountId)) {
+          continue;
+        }
+
+        let fullMatch = match;
+        if (!match.players || match.players.length === 0) {
+          try {
+            fullMatch = await this.opendotaClient.getMatch(match.match_id);
+          } catch (error) {
+            continue;
+          }
+        }
+
+        if (!fullMatch.players || fullMatch.players.length === 0) {
+          continue;
+        }
+
+        const accountIdNum = parseInt(accountId);
+        const player = fullMatch.players.find(p => p.account_id === accountIdNum);
+        
+        if (!player) {
+          continue;
+        }
+
+        const multiKills = player.multi_kills;
+        if (multiKills && typeof multiKills === 'object') {
+          const rampageCount = multiKills['5'] || 0;
+          
+          if (rampageCount > 0) {
+            logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${match.match_id}`);
+            this.stateCache.markRampageDetected(match.match_id, accountId, playerName);
+            
+            const matchUrl = `https://www.opendota.com/matches/${match.match_id}`;
+            const win = fullMatch.radiant_win === (player.player_slot < 128);
+            const embed = this.messageFormatter.formatRampageNotification(
+              playerName,
+              player.hero_id,
+              match.match_id,
+              player.kills || 0,
+              player.deaths || 0,
+              player.assists || 0,
+              win,
+              matchUrl
+            );
+            
+            await this.discordBot.sendNotification(null, embed);
+          }
+        }
+      }
+    } catch (error) {
+      logger.error(`Error checking rampages for ${playerName}:`, error.message);
     }
   }
 
