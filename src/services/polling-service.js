@@ -262,7 +262,6 @@ export class PollingService {
                 this.stateCache.markRampageDetected(match.match_id, accountId, playerName);
                 
                 // Send notification
-                const matchUrl = `https://www.opendota.com/matches/${match.match_id}`;
                 const win = fullMatch.radiant_win === (player.player_slot < 128);
                 const embed = this.messageFormatter.formatRampageNotification(
                   playerName,
@@ -272,7 +271,7 @@ export class PollingService {
                   player.deaths || 0,
                   player.assists || 0,
                   win,
-                  matchUrl
+                  null
                 );
                 
                 await this.discordBot.sendNotification(null, embed);
@@ -341,7 +340,6 @@ export class PollingService {
             logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${match.match_id}`);
             this.stateCache.markRampageDetected(match.match_id, accountId, playerName);
             
-            const matchUrl = `https://www.opendota.com/matches/${match.match_id}`;
             const win = fullMatch.radiant_win === (player.player_slot < 128);
             const embed = this.messageFormatter.formatRampageNotification(
               playerName,
@@ -351,7 +349,7 @@ export class PollingService {
               player.deaths || 0,
               player.assists || 0,
               win,
-              matchUrl
+              null
             );
             
             await this.discordBot.sendNotification(null, embed);

@@ -525,10 +525,6 @@ export class MessageFormatter {
       }
     );
 
-    if (matchUrl) {
-      embed.setURL(matchUrl);
-    }
-
     embed.setFooter({ text: `Match ID: ${matchId}` });
 
     return embed;
