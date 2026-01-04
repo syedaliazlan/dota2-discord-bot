@@ -37,22 +37,29 @@ async function main() {
     const friendsManager = new FriendsManager(config.friends);
     
     // Load heroes from API first to get correct mapping
+    logger.info('Loading heroes from OpenDota API...');
     const heroMap = await loadHeroesFromAPI(opendotaClient);
+    logger.info('Heroes loaded successfully');
+    
     const messageFormatter = new MessageFormatter(heroMap, config.dailySummary.mainAccountName);
 
     // Initialize Discord bot
+    logger.info('Initializing Discord bot...');
     const discordBot = new DiscordBot(
       config.discord.token,
       config.discord.channelId
     );
 
     // Login to Discord
+    logger.info('Logging in to Discord...');
     await discordBot.login();
 
     // Wait a bit for bot to be ready
+    logger.info('Waiting for Discord bot to be ready...');
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Initialize command handler
+    logger.info('Initializing command handler...');
     const commandHandler = new CommandHandler(
       discordBot,
       opendotaClient,
@@ -64,9 +71,11 @@ async function main() {
     );
 
     // Register slash commands with Discord
+    logger.info('Registering slash commands with Discord...');
     await commandHandler.registerSlashCommands();
 
     // Initialize polling service
+    logger.info('Initializing polling service...');
     const pollingService = new PollingService(
       opendotaClient,
       dotabuffScraper,
@@ -81,6 +90,7 @@ async function main() {
     );
 
     // Start polling service
+    logger.info('Starting polling service...');
     pollingService.start();
 
     logger.info('Bot is ready and running!');

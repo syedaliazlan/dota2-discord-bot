@@ -21,19 +21,31 @@ export async function loadHeroesFromAPI(opendotaClient) {
 
   heroMapPromise = (async () => {
     try {
+      logger.info('Fetching heroes list from OpenDota API...');
       const heroes = await opendotaClient.getHeroes();
+      
+      if (!heroes) {
+        logger.warn('No heroes data received from API, using empty map');
+        return {};
+      }
+      
       heroMap = {};
       
-      if (heroes && Array.isArray(heroes)) {
+      if (Array.isArray(heroes)) {
         heroes.forEach(hero => {
           heroMap[hero.id] = hero.localized_name || hero.name;
         });
+        logger.info(`Loaded ${Object.keys(heroMap).length} heroes from API`);
+      } else {
+        logger.warn('Heroes data is not an array, using empty map');
+        return {};
       }
       
       return heroMap;
     } catch (error) {
-      logger.error('Failed to load heroes from API:', error);
-      return null;
+      logger.error('Failed to load heroes from API:', error.message || error);
+      logger.warn('Continuing with empty hero map - hero names may not display correctly');
+      return {};
     }
   })();
 

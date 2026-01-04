@@ -45,10 +45,18 @@ export class DiscordBot {
    */
   async login() {
     try {
+      logger.info('Attempting to connect to Discord...');
+      if (!this.token || this.token.trim() === '') {
+        throw new Error('Discord bot token is missing or empty');
+      }
+      
       await this.client.login(this.token);
       logger.info('Discord bot connected successfully');
     } catch (error) {
-      logger.error('Failed to login to Discord:', error.message);
+      logger.error('Failed to login to Discord:', error.message || error);
+      if (error.code) {
+        logger.error(`Discord error code: ${error.code}`);
+      }
       throw error;
     }
   }
