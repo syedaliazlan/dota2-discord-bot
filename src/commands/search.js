@@ -106,6 +106,7 @@ export const searchCommand = {
       embed.setTitle(`🎮 Recent Matches - ${player.name}`);
 
       await interaction.editReply({ embeds: [embed] });
+      logger.info(`Search completed for ${player.name} (${player.accountId}) - ${matches.length} matches`);
     } catch (error) {
       logger.error('Error executing search command:', error);
       

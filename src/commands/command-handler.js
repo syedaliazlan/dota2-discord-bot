@@ -64,6 +64,8 @@ export class CommandHandler {
       }
 
       try {
+        logger.info(`Command received: /${interaction.commandName} from ${interaction.user.tag}`);
+        
         // Execute command immediately - commands should call deferReply() within 3 seconds
         // Execute command with appropriate parameters
         // All commands should call deferReply() immediately to avoid timeout

@@ -49,9 +49,14 @@ export class OpenDotaClient {
     const useApiKey = this.apiKeyValid && this.apiKey;
     const url = useApiKey ? `${endpoint}${separator}api_key=${this.apiKey}` : endpoint;
 
+    logger.info(`API Request: ${endpoint}`);
+    const startTime = Date.now();
+
     for (let i = 0; i < retries; i++) {
       try {
         const response = await this.client.get(url);
+        const duration = Date.now() - startTime;
+        logger.info(`API Response: ${endpoint} (${duration}ms, ${response.status})`);
         return response.data;
       } catch (error) {
         if (error.response) {
