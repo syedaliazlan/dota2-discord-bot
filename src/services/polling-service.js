@@ -45,6 +45,9 @@ export class PollingService {
 
     this.isRunning = true;
     logger.info(`Polling service started (checking every ${this.intervalMinutes} minutes)`);
+    
+    // Skip immediate poll - let the cron job handle it to avoid overwhelming API on startup
+    logger.info('Skipping initial poll - first check will run in ' + this.intervalMinutes + ' minutes');
 
     // Setup daily summary with configurable times
     // node-cron: 0=Sunday, 1=Monday, ..., 6=Saturday
@@ -70,9 +73,6 @@ export class PollingService {
     });
     
     logger.info(`Daily summary scheduled: ${weekdayHour.toString().padStart(2, '0')}:${weekdayMinute.toString().padStart(2, '0')} UK time (Mon-Fri), ${weekendHour.toString().padStart(2, '0')}:${weekendMinute.toString().padStart(2, '0')} UK time (Sat-Sun)`);
-
-    // Do initial check
-    this.checkForUpdates();
   }
 
   /**
@@ -267,10 +267,9 @@ export class PollingService {
    */
   async checkStatChanges() {
     try {
-      const [totalsData, winLossData] = await Promise.all([
-        this.opendotaClient.getPlayerTotals(this.accountId),
-        this.opendotaClient.getPlayerWinLoss(this.accountId)
-      ]);
+      // Sequential requests to avoid overwhelming API (especially on free tier)
+      const totalsData = await this.opendotaClient.getPlayerTotals(this.accountId);
+      const winLossData = await this.opendotaClient.getPlayerWinLoss(this.accountId);
 
       const newStats = this.dataProcessor.processPlayerStats(totalsData, winLossData);
       const comparison = this.dataProcessor.detectStatChanges(newStats);

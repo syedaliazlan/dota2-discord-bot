@@ -36,6 +36,18 @@ async function main() {
     // Initialize friends manager
     const friendsManager = new FriendsManager(config.friends);
     
+    // Test API connectivity first
+    logger.info('Testing OpenDota API connectivity...');
+    try {
+      const testStart = Date.now();
+      await opendotaClient.getHeroes();
+      const testDuration = Date.now() - testStart;
+      logger.info(`OpenDota API is reachable (response time: ${testDuration}ms)`);
+    } catch (error) {
+      logger.warn(`⚠️ OpenDota API connectivity issue: ${error.message}`);
+      logger.warn('The bot will start but API commands may not work until connectivity is restored.');
+    }
+    
     // Load heroes from API first to get correct mapping
     logger.info('Loading heroes from OpenDota API...');
     const heroMap = await loadHeroesFromAPI(opendotaClient);
