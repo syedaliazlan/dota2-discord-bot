@@ -36,16 +36,38 @@ async function main() {
     // Initialize friends manager
     const friendsManager = new FriendsManager(config.friends);
     
-    // Test API connectivity first
+    // Test API connectivity first with detailed diagnostics
     logger.info('Testing OpenDota API connectivity...');
     try {
       const testStart = Date.now();
+      
+      // Try a simple DNS lookup first
+      const dns = await import('dns');
+      const { promisify } = await import('util');
+      const lookup = promisify(dns.lookup);
+      
+      try {
+        const dnsResult = await lookup('api.opendota.com');
+        logger.info(`DNS resolved: api.opendota.com -> ${dnsResult.address}`);
+      } catch (dnsError) {
+        logger.error(`DNS resolution failed: ${dnsError.message}`);
+        logger.error('Your server cannot resolve api.opendota.com - check DNS settings or firewall');
+      }
+      
+      // Now try the actual API
       await opendotaClient.getHeroes();
       const testDuration = Date.now() - testStart;
-      logger.info(`OpenDota API is reachable (response time: ${testDuration}ms)`);
+      logger.info(`✅ OpenDota API is reachable (response time: ${testDuration}ms)`);
     } catch (error) {
-      logger.warn(`⚠️ OpenDota API connectivity issue: ${error.message}`);
-      logger.warn('The bot will start but API commands may not work until connectivity is restored.');
+      logger.error(`❌ OpenDota API connectivity FAILED: ${error.message}`);
+      if (error.code === 'ECONNREFUSED') {
+        logger.error('Connection refused - firewall may be blocking outbound HTTPS');
+      } else if (error.code === 'ENOTFOUND') {
+        logger.error('DNS lookup failed - server cannot resolve api.opendota.com');
+      } else if (error.code === 'API_TIMEOUT' || error.message?.includes('timeout')) {
+        logger.error('Connection timed out - network is blocked or extremely slow');
+      }
+      logger.warn('The bot will start but API commands will NOT work until this is fixed.');
     }
     
     // Load heroes from API first to get correct mapping
