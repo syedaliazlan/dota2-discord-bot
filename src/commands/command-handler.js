@@ -131,11 +131,19 @@ export class CommandHandler {
       // For faster testing, register to a specific guild
       const guildId = process.env.DISCORD_GUILD_ID;
       
+      // ALWAYS clear global commands first to prevent duplicates when switching modes
+      try {
+        await client.application.commands.set([]);
+        logger.info('Cleared global commands');
+      } catch (clearError) {
+        logger.warn('Failed to clear global commands:', clearError.message);
+      }
+      
       if (guildId) {
         // Register to specific guild (instant)
         const guild = client.guilds.cache.get(guildId);
         if (guild) {
-          // Clear existing commands first to prevent duplicates, then set new ones
+          // Clear guild commands first to prevent duplicates
           await guild.commands.set([]);
           await new Promise(resolve => setTimeout(resolve, 500)); // Small delay to ensure clear
           await guild.commands.set(commands);
@@ -147,8 +155,7 @@ export class CommandHandler {
           logger.info(`Registered ${commands.length} commands globally (guild not found)`);
         }
       } else {
-        // Register globally - clear first to prevent duplicates
-        await client.application.commands.set([]);
+        // Register globally
         await new Promise(resolve => setTimeout(resolve, 500)); // Small delay to ensure clear
         await client.application.commands.set(commands);
         logger.info(`Registered ${commands.length} commands globally`);

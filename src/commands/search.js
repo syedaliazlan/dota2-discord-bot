@@ -108,7 +108,13 @@ export const searchCommand = {
       await interaction.editReply({ embeds: [embed] });
     } catch (error) {
       logger.error('Error executing search command:', error);
-      await interaction.editReply('An error occurred while searching for matches.');
+      
+      // Provide user-friendly error messages
+      if (error.code === 'API_TIMEOUT' || error.message?.includes('timeout')) {
+        await interaction.editReply('⏱️ The OpenDota API is slow or overloaded. Please try again in a few moments.');
+      } else {
+        await interaction.editReply('An error occurred while searching for matches.');
+      }
     }
   }
 };

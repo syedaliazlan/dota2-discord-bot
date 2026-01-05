@@ -16,10 +16,10 @@ export class OpenDotaClient {
     this.lastRequestTime = 0;
 
     // Create axios instance with default config
-    // Reduced timeout to 8s to leave buffer for Discord's 3s response window
+    // 15s timeout - commands use deferReply() so we have more time
     this.client = axios.create({
       baseURL: this.baseUrl,
-      timeout: 8000
+      timeout: 15000
     });
   }
 
@@ -91,14 +91,26 @@ export class OpenDotaClient {
           }
         }
         
-        logger.error(`API request failed (attempt ${i + 1}/${retries}):`, error.message);
+        // Handle timeout errors specifically
+        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+          logger.warn(`API request timed out (attempt ${i + 1}/${retries}): ${endpoint}`);
+        } else {
+          logger.error(`API request failed (attempt ${i + 1}/${retries}):`, error.message);
+        }
         
         if (i === retries - 1) {
+          // Provide more descriptive error for timeouts
+          if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+            const timeoutError = new Error(`OpenDota API timed out after ${this.client.defaults.timeout}ms. The API may be slow or overloaded.`);
+            timeoutError.code = 'API_TIMEOUT';
+            throw timeoutError;
+          }
           throw error;
         }
         
-        // Exponential backoff
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+        // Exponential backoff (longer wait for timeouts)
+        const backoffTime = error.code === 'ECONNABORTED' ? Math.pow(2, i) * 2000 : Math.pow(2, i) * 1000;
+        await new Promise(resolve => setTimeout(resolve, backoffTime));
       }
     }
   }
