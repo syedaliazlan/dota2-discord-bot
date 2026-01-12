@@ -67,13 +67,13 @@ async function main() {
       config.discord.channelId
     );
 
-    // Login to Discord
+    // Login to Discord and wait for ready
     logger.info('Logging in to Discord...');
     await discordBot.login();
-
-    // Wait a bit for bot to be ready
-    logger.info('Waiting for Discord bot to be ready...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Wait for the ready event (proper way instead of fixed delay)
+    await discordBot.waitForReady();
+    logger.info('Discord bot is ready!');
 
     // Initialize command handler
     logger.info('Initializing command handler...');

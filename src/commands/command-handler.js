@@ -1,4 +1,5 @@
 import { Events } from 'discord.js';
+import axios from 'axios';
 import { profileCommand } from './profile.js';
 import { recentCommand } from './recent.js';
 import { statsCommand } from './stats.js';
@@ -121,45 +122,72 @@ export class CommandHandler {
   }
 
   /**
-   * Register commands with Discord (for global/guild commands)
+   * Register commands with Discord using axios (discord.js REST client has issues)
    */
   async registerSlashCommands() {
     const client = this.discordBot.getClient();
     const commands = Array.from(this.discordBot.getCommands().values()).map(cmd => cmd.data.toJSON());
 
-    // Helper function with timeout
-    const withTimeout = (promise, ms) => {
-      return Promise.race([
-        promise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
-      ]);
-    };
+    logger.info(`Preparing to register ${commands.length} commands:`);
+    commands.forEach(cmd => logger.info(`  - /${cmd.name}: ${cmd.description}`));
 
     try {
       const guildId = process.env.DISCORD_GUILD_ID;
+      const token = process.env.DISCORD_BOT_TOKEN;
+      const clientId = client.user.id;
       
-      if (guildId) {
-        const guild = client.guilds.cache.get(guildId);
-        if (guild) {
-          logger.info(`Registering commands to guild ${guildId}...`);
-          await withTimeout(guild.commands.set(commands), 30000);
-          logger.info(`Registered ${commands.length} commands to guild ${guildId}`);
-        } else {
-          logger.warn(`Guild ${guildId} not found, skipping command registration`);
-          logger.warn('Commands may already be registered from a previous run');
+      // Build the API URL
+      const url = guildId 
+        ? `https://discord.com/api/v10/applications/${clientId}/guilds/${guildId}/commands`
+        : `https://discord.com/api/v10/applications/${clientId}/commands`;
+      
+      logger.info(`Registering commands to: ${guildId ? 'guild ' + guildId : 'global'}`);
+      
+      // Use axios directly (discord.js REST client hangs on some systems)
+      const response = await axios.put(url, commands, {
+        headers: {
+          'Authorization': `Bot ${token}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      });
+      
+      const registeredCommands = response.data;
+      logger.info(`✅ Successfully registered ${registeredCommands.length} commands!`);
+      registeredCommands.forEach(cmd => {
+        logger.info(`  ✓ /${cmd.name} (ID: ${cmd.id})`);
+      });
+      
+    } catch (error) {
+      if (error.response) {
+        const status = error.response.status;
+        const data = error.response.data;
+        
+        if (status === 429) {
+          // Rate limited - this is fine, commands may already be registered
+          const retryAfter = data.retry_after || 'unknown';
+          logger.warn(`⚠️ Rate limited by Discord (retry after ${retryAfter}s)`);
+          logger.warn('Commands may already be registered - continuing anyway...');
+          return; // Don't throw - just continue
+        }
+        
+        logger.error('❌ Failed to register slash commands!');
+        logger.error(`HTTP Status: ${status}`);
+        logger.error(`Error: ${JSON.stringify(data)}`);
+        
+        if (status === 401) {
+          logger.error('>>> Invalid bot token! Check DISCORD_BOT_TOKEN in .env');
+        } else if (status === 403) {
+          logger.error('>>> Missing Access! The bot lacks the "applications.commands" scope.');
+          logger.error('>>> Kick the bot and re-add with: bot + applications.commands scopes');
         }
       } else {
-        logger.info('Registering commands globally (this may take a while)...');
-        await withTimeout(client.application.commands.set(commands), 60000);
-        logger.info(`Registered ${commands.length} commands globally`);
+        logger.error('❌ Failed to register slash commands!');
+        logger.error(`Error: ${error.message}`);
       }
-    } catch (error) {
-      if (error.message === 'Timeout') {
-        logger.warn('Command registration timed out - commands may already be registered');
-      } else {
-        logger.error('Failed to register slash commands:', error.message);
-      }
-      logger.info('Continuing anyway - existing commands should still work');
+      
+      // Don't throw - let the bot continue even if registration fails
+      logger.warn('Continuing anyway - existing commands should still work');
     }
   }
 }

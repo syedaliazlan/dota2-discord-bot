@@ -24,11 +24,12 @@ export class DiscordBot {
    * Setup event handlers
    */
   setupEventHandlers() {
-    // Handle ready event
-    // Note: discord.js v15 will rename 'ready' to 'clientReady', but v14 uses 'ready'
-    // The deprecation warning is informational and won't affect functionality
     this.client.once('ready', () => {
-      logger.info(`Discord bot logged in as ${this.client.user.tag}`);
+      logger.info(`✅ Discord bot logged in as ${this.client.user.tag}`);
+      logger.info(`Bot is in ${this.client.guilds.cache.size} guild(s)`);
+      this.client.guilds.cache.forEach(guild => {
+        logger.info(`  - ${guild.name} (ID: ${guild.id})`);
+      });
     });
 
     this.client.on('error', (error) => {
@@ -37,6 +38,24 @@ export class DiscordBot {
 
     this.client.on('warn', (warning) => {
       logger.warn('Discord client warning:', warning);
+    });
+  }
+
+  /**
+   * Wait for the bot to be fully ready
+   * This ensures guild cache is populated and we can register commands
+   */
+  waitForReady() {
+    return new Promise((resolve) => {
+      if (this.client.isReady()) {
+        logger.info('Bot already ready');
+        resolve();
+      } else {
+        logger.info('Waiting for ready event...');
+        this.client.once('ready', () => {
+          resolve();
+        });
+      }
     });
   }
 
