@@ -1,8 +1,7 @@
 import { loadConfig } from './utils/config.js';
 import { logger } from './utils/logger.js';
 import { DiscordBot } from './bot/discord-bot.js';
-import { OpenDotaClient } from './services/opendota-client.js';
-import { DotabuffScraper } from './services/dotabuff-scraper.js';
+import { StratzClient } from './services/stratz-client.js';
 import { DataProcessor } from './core/data-processor.js';
 import { StateCache } from './core/state-cache.js';
 import { MessageFormatter } from './utils/message-formatter.js';
@@ -21,58 +20,42 @@ async function main() {
     // Load configuration
     const config = loadConfig();
 
+    // Validate STRATZ API token
+    if (!config.stratz.apiToken) {
+      throw new Error('STRATZ_API_TOKEN is required. Get your token at https://stratz.com/api');
+    }
+
     // Initialize state cache
     const stateCache = new StateCache(config.cache.file);
     await stateCache.load();
 
-    // Initialize services
-    const opendotaClient = new OpenDotaClient(
-      config.opendota.baseUrl,
-      config.opendota.apiKey
-    );
-    const dotabuffScraper = new DotabuffScraper();
+    // Initialize STRATZ client
+    const stratzClient = new StratzClient(config.stratz.apiToken);
     const dataProcessor = new DataProcessor(stateCache, config.steam.accountId);
     
     // Initialize friends manager
     const friendsManager = new FriendsManager(config.friends);
     
-    // Test API connectivity first with detailed diagnostics
-    logger.info('Testing OpenDota API connectivity...');
+    // Test STRATZ API connectivity
+    logger.info('Testing STRATZ API connectivity...');
     try {
       const testStart = Date.now();
-      
-      // Try a simple DNS lookup first
-      const dns = await import('dns');
-      const { promisify } = await import('util');
-      const lookup = promisify(dns.lookup);
-      
-      try {
-        const dnsResult = await lookup('api.opendota.com');
-        logger.info(`DNS resolved: api.opendota.com -> ${dnsResult.address}`);
-      } catch (dnsError) {
-        logger.error(`DNS resolution failed: ${dnsError.message}`);
-        logger.error('Your server cannot resolve api.opendota.com - check DNS settings or firewall');
-      }
-      
-      // Now try the actual API
-      await opendotaClient.getHeroes();
+      const isConnected = await stratzClient.testConnection();
       const testDuration = Date.now() - testStart;
-      logger.info(`✅ OpenDota API is reachable (response time: ${testDuration}ms)`);
-    } catch (error) {
-      logger.error(`❌ OpenDota API connectivity FAILED: ${error.message}`);
-      if (error.code === 'ECONNREFUSED') {
-        logger.error('Connection refused - firewall may be blocking outbound HTTPS');
-      } else if (error.code === 'ENOTFOUND') {
-        logger.error('DNS lookup failed - server cannot resolve api.opendota.com');
-      } else if (error.code === 'API_TIMEOUT' || error.message?.includes('timeout')) {
-        logger.error('Connection timed out - network is blocked or extremely slow');
+      
+      if (isConnected) {
+        logger.info(`✅ STRATZ API is reachable (response time: ${testDuration}ms)`);
+      } else {
+        logger.warn('⚠️ STRATZ API test returned unexpected result');
       }
-      logger.warn('The bot will start but API commands will NOT work until this is fixed.');
+    } catch (error) {
+      logger.error(`❌ STRATZ API connectivity FAILED: ${error.message}`);
+      logger.warn('The bot will start but API commands may not work until this is fixed.');
     }
     
-    // Load heroes from API first to get correct mapping
-    logger.info('Loading heroes from OpenDota API...');
-    const heroMap = await loadHeroesFromAPI(opendotaClient);
+    // Load heroes from STRATZ API
+    logger.info('Loading heroes from STRATZ API...');
+    const heroMap = await loadHeroesFromAPI(stratzClient);
     logger.info('Heroes loaded successfully');
     
     const messageFormatter = new MessageFormatter(heroMap, config.dailySummary.mainAccountName);
@@ -96,12 +79,12 @@ async function main() {
     logger.info('Initializing command handler...');
     const commandHandler = new CommandHandler(
       discordBot,
-      opendotaClient,
-      dotabuffScraper,
+      stratzClient,
       dataProcessor,
       messageFormatter,
       config.steam.accountId,
-      friendsManager
+      friendsManager,
+      heroMap
     );
 
     // Register slash commands with Discord
@@ -111,8 +94,7 @@ async function main() {
     // Initialize polling service
     logger.info('Initializing polling service...');
     const pollingService = new PollingService(
-      opendotaClient,
-      dotabuffScraper,
+      stratzClient,
       dataProcessor,
       stateCache,
       discordBot,
@@ -162,4 +144,3 @@ async function main() {
 
 // Start the application
 main();
-

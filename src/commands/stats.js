@@ -3,13 +3,14 @@ import { logger } from '../utils/logger.js';
 
 /**
  * /stats command - Display player statistics
+ * Uses STRATZ API
  */
 export const statsCommand = {
   data: new SlashCommandBuilder()
     .setName('stats')
     .setDescription('Display your player statistics'),
 
-  async execute(interaction, opendotaClient, dataProcessor, messageFormatter, accountId) {
+  async execute(interaction, stratzClient, dataProcessor, messageFormatter, accountId) {
     // Defer immediately to prevent interaction timeout
     try {
       await interaction.deferReply();
@@ -22,12 +23,15 @@ export const statsCommand = {
     }
 
     try {
-      const [totalsData, winLossData] = await Promise.all([
-        opendotaClient.getPlayerTotals(accountId),
-        opendotaClient.getPlayerWinLoss(accountId)
+      // Fetch player data, win/loss, and recent matches for averages
+      const [playerData, winLossData, recentMatches] = await Promise.all([
+        stratzClient.getPlayerTotals(accountId),
+        stratzClient.getPlayerWinLoss(accountId),
+        stratzClient.getRecentMatches(accountId, 20) // Get 20 recent matches for averages
       ]);
 
-      const stats = dataProcessor.processPlayerStats(totalsData, winLossData);
+      // Use the enhanced stats processor that calculates averages from recent matches
+      const stats = dataProcessor.processPlayerStatsWithMatches(playerData, winLossData, recentMatches);
       const embed = messageFormatter.formatStats(stats);
 
       await interaction.editReply({ embeds: [embed] });
@@ -37,4 +41,3 @@ export const statsCommand = {
     }
   }
 };
-

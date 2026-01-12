@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 
 /**
  * /heroes command - Show hero performance
+ * Uses STRATZ API
  */
 export const heroesCommand = {
   data: new SlashCommandBuilder()
@@ -15,7 +16,7 @@ export const heroesCommand = {
         .setMaxValue(20)
     ),
 
-  async execute(interaction, opendotaClient, dataProcessor, messageFormatter, accountId) {
+  async execute(interaction, stratzClient, dataProcessor, messageFormatter, accountId) {
     // Defer immediately to prevent interaction timeout
     try {
       await interaction.deferReply();
@@ -30,7 +31,8 @@ export const heroesCommand = {
     try {
       const limit = interaction.options.getInteger('limit') || 10;
       
-      const heroesData = await opendotaClient.getPlayerHeroes(accountId);
+      // Fetch hero stats from STRATZ
+      const heroesData = await stratzClient.getPlayerHeroes(accountId);
 
       if (!heroesData || heroesData.length === 0) {
         await interaction.editReply('No hero statistics available.');
@@ -47,4 +49,3 @@ export const heroesCommand = {
     }
   }
 };
-

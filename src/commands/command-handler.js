@@ -9,20 +9,22 @@ import { matchCommand } from './match.js';
 import { searchCommand } from './search.js';
 import { listfriendsCommand } from './listfriends.js';
 import { dailyallCommand } from './dailyall.js';
+import { rampageCommand } from './rampage.js';
 import { logger } from '../utils/logger.js';
 
 /**
  * Command handler to register and route slash commands
+ * Updated to use STRATZ API
  */
 export class CommandHandler {
-  constructor(discordBot, opendotaClient, dotabuffScraper, dataProcessor, messageFormatter, accountId, friendsManager = null) {
+  constructor(discordBot, stratzClient, dataProcessor, messageFormatter, accountId, friendsManager = null, heroMap = null) {
     this.discordBot = discordBot;
-    this.opendotaClient = opendotaClient;
-    this.dotabuffScraper = dotabuffScraper;
+    this.stratzClient = stratzClient;
     this.dataProcessor = dataProcessor;
     this.messageFormatter = messageFormatter;
     this.accountId = accountId;
     this.friendsManager = friendsManager;
+    this.heroMap = heroMap;
 
     this.setupCommands();
     this.setupInteractionHandler();
@@ -43,6 +45,7 @@ export class CommandHandler {
     this.discordBot.registerCommand(searchCommand);
     this.discordBot.registerCommand(listfriendsCommand);
     this.discordBot.registerCommand(dailyallCommand);
+    this.discordBot.registerCommand(rampageCommand);
 
     logger.info(`Registered ${this.discordBot.getCommands().size} commands`);
   }
@@ -66,33 +69,29 @@ export class CommandHandler {
       try {
         logger.info(`Command received: /${interaction.commandName} from ${interaction.user.tag}`);
         
-        // Execute command immediately - commands should call deferReply() within 3 seconds
-        // Execute command with appropriate parameters
-        // All commands should call deferReply() immediately to avoid timeout
+        // Execute command with STRATZ client
         if (interaction.commandName === 'profile') {
-          await command.execute(interaction, this.opendotaClient, this.dotabuffScraper, 
-            this.dataProcessor, this.messageFormatter, this.accountId);
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.accountId);
         } else if (interaction.commandName === 'recent') {
-          await command.execute(interaction, this.opendotaClient, this.dataProcessor, 
-            this.messageFormatter, this.accountId);
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.accountId);
         } else if (interaction.commandName === 'stats') {
-          await command.execute(interaction, this.opendotaClient, this.dataProcessor, 
-            this.messageFormatter, this.accountId);
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.accountId);
         } else if (interaction.commandName === 'heroes') {
-          await command.execute(interaction, this.opendotaClient, this.dataProcessor, 
-            this.messageFormatter, this.accountId);
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.accountId);
         } else if (interaction.commandName === 'live') {
-          await command.execute(interaction, this.opendotaClient, this.messageFormatter, this.accountId);
+          await command.execute(interaction, this.stratzClient, this.messageFormatter, this.accountId);
         } else if (interaction.commandName === 'achievements') {
-          await command.execute(interaction, this.dotabuffScraper, this.messageFormatter, this.accountId);
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.accountId);
         } else if (interaction.commandName === 'match') {
-          await command.execute(interaction, this.opendotaClient, this.dataProcessor, this.messageFormatter, this.accountId);
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.accountId);
         } else if (interaction.commandName === 'search') {
-          await command.execute(interaction, this.opendotaClient, this.dataProcessor, this.messageFormatter, this.friendsManager);
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.friendsManager);
         } else if (interaction.commandName === 'listfriends') {
           await command.execute(interaction, this.friendsManager);
         } else if (interaction.commandName === 'dailyall') {
-          await command.execute(interaction, this.opendotaClient, this.dataProcessor, this.messageFormatter, this.friendsManager);
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.friendsManager);
+        } else if (interaction.commandName === 'rampage') {
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.friendsManager, this.heroMap);
         }
       } catch (error) {
         logger.error(`Error executing command ${interaction.commandName}:`, error);
@@ -167,4 +166,3 @@ export class CommandHandler {
     }
   }
 }
-

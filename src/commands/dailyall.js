@@ -3,18 +3,58 @@ import { logger } from '../utils/logger.js';
 
 /**
  * /dailyall command - Show daily summary for all players
+ * Uses STRATZ API - Shows previous day (UK time)
  */
 export const dailyallCommand = {
   data: new SlashCommandBuilder()
     .setName('dailyall')
-    .setDescription('Show daily summary for all tracked players (last 24 hours)'),
+    .setDescription('Show daily summary for all tracked players (previous day UK time)'),
 
-  async execute(interaction, opendotaClient, dataProcessor, messageFormatter, friendsManager) {
-    // Defer immediately to prevent interaction timeout
+  /**
+   * Get the previous day's time range in UK time (Europe/London)
+   */
+  getPreviousDayRange() {
+    const now = new Date();
+    
+    const ukFormatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    
+    const ukParts = ukFormatter.formatToParts(now);
+    const ukYear = parseInt(ukParts.find(p => p.type === 'year').value);
+    const ukMonth = parseInt(ukParts.find(p => p.type === 'month').value) - 1;
+    const ukDay = parseInt(ukParts.find(p => p.type === 'day').value);
+    
+    const yesterdayUK = new Date(Date.UTC(ukYear, ukMonth, ukDay - 1));
+    
+    const startOfYesterday = new Date(yesterdayUK);
+    startOfYesterday.setUTCHours(0, 0, 0, 0);
+    
+    const ukString = startOfYesterday.toLocaleString('en-GB', { timeZone: 'Europe/London', timeZoneName: 'short' });
+    const ukOffset = ukString.includes('BST') ? 60 : 0;
+    startOfYesterday.setTime(startOfYesterday.getTime() - ukOffset * 60 * 1000);
+    
+    const endOfYesterday = new Date(startOfYesterday);
+    endOfYesterday.setTime(endOfYesterday.getTime() + (24 * 60 * 60 * 1000) - 1000);
+    
+    // Format date as "11-Jan-2026"
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const dateString = `${ukDay - 1}-${months[ukMonth]}-${ukYear}`;
+    
+    return {
+      startTimestamp: Math.floor(startOfYesterday.getTime() / 1000),
+      endTimestamp: Math.floor(endOfYesterday.getTime() / 1000),
+      dateString
+    };
+  },
+
+  async execute(interaction, stratzClient, dataProcessor, messageFormatter, friendsManager) {
     try {
       await interaction.deferReply();
     } catch (error) {
-      // If defer fails, interaction might be expired - log and return
       if (error.code === 10062) {
         logger.error('Interaction expired before deferReply could complete');
         return;
@@ -28,14 +68,12 @@ export const dailyallCommand = {
         return;
       }
 
-      await interaction.editReply('⏳ Generating daily summary for all players... This may take a moment.');
+      const { startTimestamp, endTimestamp, dateString } = this.getPreviousDayRange();
+      await interaction.editReply(`⏳ Generating daily summary for ${dateString} (UK time)... This may take a moment.`);
 
-      const twentyFourHoursAgo = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
       const playerSummaries = [];
-      const playersChecked = [];
-      const playersWithNoMatches = [];
+      const allRampages = [];
 
-      // Get all friends
       const friends = friendsManager.getAllFriends();
 
       if (friends.length === 0) {
@@ -43,167 +81,130 @@ export const dailyallCommand = {
         return;
       }
 
-      // Process each friend
       logger.detailInfo(`\n=== Processing ${friends.length} players for daily summary ===`);
-      logger.detailInfo(`Time range: Last 24 hours (since ${new Date(twentyFourHoursAgo * 1000).toISOString()})`);
+      logger.detailInfo(`Time range: ${dateString} UK time`);
       
       for (const friend of friends) {
         try {
-          // Track players checked
-          playersChecked.push(friend.name);
-          
-          logger.detailInfo(`\n[${playersChecked.length}/${friends.length}] Checking player: ${friend.name}`);
-          logger.detail(`  Account IDs: ${friend.ids.join(', ')}`);
+          logger.detailInfo(`Checking player: ${friend.name}`);
           
           let bestAccountId = friend.ids[0];
           let recentMatches = [];
           
-          // For players with multiple IDs, check all accounts to find matches
           if (friend.ids.length > 1) {
-            logger.detailInfo(`  Multiple accounts detected, checking all ${friend.ids.length} accounts...`);
-            // Check all accounts to find the one with most matches
             let bestMatchCount = 0;
             let bestAccountMatches = [];
             
-            // Check matches for all accounts (skip validation - if getPlayerMatches fails, account is invalid)
-            for (let i = 0; i < friend.ids.length; i++) {
-              const accountId = friend.ids[i]; // Already converted to Dota 2 Account ID
+            for (const accountId of friend.ids) {
               try {
-                logger.detail(`    [${i + 1}/${friend.ids.length}] Checking account ID: ${accountId}`);
-                const matchesData = await opendotaClient.getPlayerMatches(accountId, 50);
+                const matchesData = await stratzClient.getPlayerMatchesSince(accountId, startTimestamp, 50);
+                const filteredMatches = matchesData.filter(m => 
+                  m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
+                );
                 
-                if (!matchesData || matchesData.length === 0) {
-                  logger.detail(`      → No matches found in recent 50 matches`);
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-                  continue;
-                }
-                
-                logger.detail(`      → Found ${matchesData.length} total matches in recent 50`);
-                
-                const accountMatches = (matchesData || []).filter(match => {
-                  const isRecent = match.start_time >= twentyFourHoursAgo;
-                  if (isRecent && logger.isDetailed()) {
-                    const matchTime = new Date(match.start_time * 1000).toISOString();
-                    logger.detail(`        ✓ Match ${match.match_id} at ${matchTime}`);
-                  }
-                  return isRecent;
-                });
-                
-                logger.detail(`      → ${accountMatches.length} matches in last 24 hours`);
-                
-                if (accountMatches.length > bestMatchCount) {
-                  bestMatchCount = accountMatches.length;
+                if (filteredMatches.length > bestMatchCount) {
+                  bestMatchCount = filteredMatches.length;
                   bestAccountId = accountId;
-                  bestAccountMatches = accountMatches;
-                  logger.detail(`      → New best account! (${bestMatchCount} matches)`);
+                  bestAccountMatches = filteredMatches;
                 }
                 
-                // Rate limiting between account checks
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, 100));
               } catch (error) {
-                logger.detail(`      ✗ Error checking account ${accountId} for ${friend.name}:`, error.message);
-                // Continue to next account
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                logger.detail(`Error checking account ${accountId} for ${friend.name}:`, error.message);
               }
             }
             
             recentMatches = bestAccountMatches;
-            logger.detailInfo(`  Best account: ${bestAccountId} with ${bestMatchCount} matches`);
           } else {
-            // Single account - just fetch matches (skip validation)
-            logger.detailInfo(`  Single account, checking matches for ID: ${bestAccountId}`);
             try {
-              const matchesData = await opendotaClient.getPlayerMatches(bestAccountId, 50);
-              
-              if (!matchesData || matchesData.length === 0) {
-                logger.detail(`    → No matches found in recent 50 matches`);
-              } else {
-                logger.detail(`    → Found ${matchesData.length} total matches in recent 50`);
-              }
-              
-              recentMatches = (matchesData || []).filter(match => {
-                const isRecent = match.start_time >= twentyFourHoursAgo;
-                if (isRecent && logger.isDetailed()) {
-                  const matchTime = new Date(match.start_time * 1000).toISOString();
-                  logger.detail(`      ✓ Match ${match.match_id} at ${matchTime}`);
-                }
-                return isRecent;
-              });
-              
-              logger.detail(`    → ${recentMatches.length} matches in last 24 hours`);
+              const matchesData = await stratzClient.getPlayerMatchesSince(bestAccountId, startTimestamp, 50);
+              recentMatches = matchesData.filter(m => 
+                m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
+              );
             } catch (error) {
-              logger.detail(`    ✗ Error fetching matches:`, error.message);
+              logger.detail(`Error fetching matches for ${friend.name}:`, error.message);
             }
           }
           
-          // Skip if no matches
           if (recentMatches.length === 0) {
-            logger.detailInfo(`  ✗ No matches found for ${friend.name} in last 24 hours`);
-            playersWithNoMatches.push(friend.name);
+            logger.detailInfo(`No matches found for ${friend.name} on ${dateString}`);
             continue;
           }
           
-          logger.detailInfo(`  ✓ Found ${recentMatches.length} matches for ${friend.name}, processing...`);
+          logger.detailInfo(`Found ${recentMatches.length} matches for ${friend.name}`);
 
-          // Process matches to get accurate hero_id
-          const accountIdNum = parseInt(bestAccountId);
-          const processedMatches = recentMatches.map((match) => {
-            if (match.players && Array.isArray(match.players) && match.players.length > 0) {
-              const player = match.players.find(p => p.account_id === accountIdNum);
-              if (player && player.hero_id !== undefined) {
-                match.hero_id = player.hero_id;
-                match.kills = player.kills ?? match.kills;
-                match.deaths = player.deaths ?? match.deaths;
-                match.assists = player.assists ?? match.assists;
+          const summary = dataProcessor.processDailySummary(recentMatches);
+          
+          // Get match IDs from recent matches
+          const matchIds = recentMatches.map(m => m.id);
+          
+          // Check feats for rampages
+          try {
+            const feats = await stratzClient.getPlayerAchievements(bestAccountId, 200);
+            const rampageFeats = stratzClient.getRampageFeatsFromMatches(feats, matchIds);
+            
+            summary.rampages = rampageFeats.length;
+            
+            for (const feat of rampageFeats) {
+              const matchData = recentMatches.find(m => m.id === feat.matchId);
+              if (matchData) {
+                const player = matchData.players?.[0];
+                const win = player?.isRadiant === matchData.didRadiantWin;
+                allRampages.push({
+                  playerName: friend.name,
+                  heroId: feat.heroId,
+                  matchId: feat.matchId,
+                  kills: player?.kills || 0,
+                  deaths: player?.deaths || 0,
+                  assists: player?.assists || 0,
+                  win: win
+                });
               }
             }
-            return match;
-          });
-
-          // Process daily summary for this player
-          const summary = dataProcessor.processDailySummary(processedMatches);
+            
+            if (rampageFeats.length > 0) {
+              logger.info(`${friend.name} got ${rampageFeats.length} rampage(s)!`);
+            }
+          } catch (error) {
+            logger.warn(`Error fetching feats for ${friend.name}:`, error.message);
+          }
+          
           playerSummaries.push({
             name: friend.name,
             accountId: bestAccountId,
             summary
           });
 
-          // Rate limiting: wait 1 second between requests (free tier: 60 calls/min)
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
           logger.error(`Error processing daily summary for ${friend.name}:`, error);
-          // Continue with other friends even if one fails
         }
       }
 
-      // Send combined summary
+      // Send rampage info as part of the reply if any found
+      let rampageInfo = '';
+      if (allRampages.length > 0) {
+        rampageInfo = `\n\n🔥 **${allRampages.length} Rampage(s) detected!** Check the channel for notifications.`;
+      }
+
       if (playerSummaries.length === 0) {
-        const embed = messageFormatter.formatMultiPlayerDailySummary([]);
+        const embed = messageFormatter.formatMultiPlayerDailySummary([], dateString);
         try {
-          await interaction.editReply({ embeds: [embed] });
+          await interaction.editReply({ content: null, embeds: [embed] });
         } catch (replyError) {
-          if (replyError.code === 10062) {
-            logger.error('Interaction expired before summary could be sent');
-          } else {
-            throw replyError;
-          }
+          if (replyError.code !== 10062) throw replyError;
         }
       } else {
-        const embed = messageFormatter.formatMultiPlayerDailySummary(playerSummaries);
+        const embed = messageFormatter.formatMultiPlayerDailySummary(playerSummaries, dateString);
         try {
-          await interaction.editReply({ embeds: [embed] });
+          await interaction.editReply({ content: rampageInfo || null, embeds: [embed] });
         } catch (replyError) {
-          if (replyError.code === 10062) {
-            logger.error('Interaction expired before summary could be sent');
-          } else {
-            throw replyError;
-          }
+          if (replyError.code !== 10062) throw replyError;
         }
       }
     } catch (error) {
       logger.error('Error executing dailyall command:', error);
       
-      // Only try to reply if interaction is still valid
       if (error.code !== 10062) {
         try {
           if (interaction.deferred || interaction.replied) {
@@ -220,4 +221,3 @@ export const dailyallCommand = {
     }
   }
 };
-

@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 
 /**
  * /match command - Get specific match details
+ * Uses STRATZ API
  */
 export const matchCommand = {
   data: new SlashCommandBuilder()
@@ -14,7 +15,7 @@ export const matchCommand = {
         .setRequired(true)
     ),
 
-  async execute(interaction, opendotaClient, dataProcessor, messageFormatter, accountId) {
+  async execute(interaction, stratzClient, dataProcessor, messageFormatter, accountId) {
     // Defer immediately to prevent interaction timeout
     try {
       await interaction.deferReply();
@@ -34,7 +35,8 @@ export const matchCommand = {
         return;
       }
 
-      const matchData = await opendotaClient.getMatch(matchId);
+      // Fetch match from STRATZ
+      const matchData = await stratzClient.getMatch(matchId);
 
       if (!matchData) {
         await interaction.editReply('Match not found. Please check the match ID.');
@@ -51,4 +53,3 @@ export const matchCommand = {
     }
   }
 };
-

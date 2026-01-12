@@ -1,29 +1,32 @@
 # Dota 2 Profile Discord Bot
 
-A Discord bot that fetches and displays Dota 2 profile data from OpenDota API and Dotabuff. The bot provides match notifications, player statistics, hero performance, achievements, and live match status through both automated polling and slash commands.
+A Discord bot that fetches and displays Dota 2 profile data using the STRATZ GraphQL API. The bot provides match notifications, player statistics, hero performance, rampage detection, and daily summaries through both automated polling and slash commands.
 
 ## Table of Contents
 
 - [Features](#features)
-- [Screenshots](#screenshots)
 - [Setup](#setup)
 - [Commands](#commands)
-- [Deployment](#deployment)
 - [Configuration](#configuration)
+- [Daily Summary](#daily-summary)
+- [Rampage Notifications](#rampage-notifications)
+- [Deployment](#deployment)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 
 ## Features
 
-- **Player Profile**: View your Dota 2 profile overview with MMR, rank, and leaderboard position
-- **Recent Matches**: Display your recent match history with win/loss, KDA, hero names, and duration
-- **Player Statistics**: View comprehensive stats including win rate, average KDA, GPM, XPM
-- **Hero Statistics**: See your top heroes by games played with hero names, win rates, and KDA
+- **STRATZ API Integration**: Fast, reliable data from STRATZ GraphQL API
+- **Player Profile**: View Dota 2 profile overview with rank and statistics
+- **Recent Matches**: Display recent match history with KDA, hero names, and duration
+- **Player Statistics**: View comprehensive stats including win rate and average KDA
+- **Hero Statistics**: See top heroes by games played with win rates and KDA
 - **Live Matches**: Check if you're currently in a live match
-- **Achievements**: Display your achievements (via Dotabuff)
+- **Achievements**: Display player achievements/feats from STRATZ
 - **Match Details**: Get detailed information about specific matches
-- **Automated Notifications**: Receive notifications when new matches complete, stats change, or you enter a live match
-- **Daily Summary**: Automatic daily summary at 3 AM UK time (Mon-Fri) or 10 PM UK time (Sat-Sun) with 24-hour statistics for all tracked players for all tracked players
+- **Rampage Detection**: Automatic detection and enhanced notifications for rampages
+- **Automated Notifications**: Receive notifications when new matches complete
+- **Daily Summary**: Automatic daily summary based on previous day (UK time) for all tracked players
 - **Multi-Player Support**: Track multiple friends and their daily summaries
 - **Player Search**: Search for any player's recent matches by name or ID
 - **Friends List**: View all tracked players in your friends list
@@ -34,6 +37,7 @@ A Discord bot that fetches and displays Dota 2 profile data from OpenDota API an
 
 - Node.js 18+ installed
 - Discord Bot Token
+- STRATZ API Token (free at [stratz.com](https://stratz.com/api))
 - Steam Account ID (32-bit)
 
 ### Installation
@@ -45,23 +49,25 @@ A Discord bot that fetches and displays Dota 2 profile data from OpenDota API an
 npm install
 ```
 
-3. Copy the example environment file:
+3. Create a `.env` file with your configuration (see [Configuration](#configuration))
+
+4. Start the bot:
 ```bash
-cp .env.example .env
+npm start
 ```
 
-4. Edit `.env` and fill in your configuration:
-   - `DISCORD_BOT_TOKEN`: Get this from [Discord Developer Portal](https://discord.com/developers/applications)
-   - `DISCORD_CHANNEL_ID`: Right-click your Discord channel → Copy ID
-   - `STEAM_ACCOUNT_ID`: Your 32-bit Steam Account ID (can be found on OpenDota profile page)
-   - `OPENDOTA_API_KEY`: (Optional) Get from [OpenDota API Keys](https://www.opendota.com/api-keys) for higher rate limits
-   - `POLLING_INTERVAL`: How often to check for updates in minutes (default: 5)
+### Getting Your STRATZ API Token
+
+1. Go to [STRATZ](https://stratz.com/)
+2. Log in with your Steam account
+3. Go to API settings and generate a token
+4. Add it to your `.env` file as `STRATZ_API_TOKEN`
 
 ### Getting Your Steam Account ID
 
-1. Go to [OpenDota](https://www.opendota.com/)
-2. Search for your Steam profile or Dota 2 profile
-3. Your Account ID will be in the URL or profile page (32-bit number)
+1. Go to [STRATZ](https://stratz.com/) or [OpenDota](https://www.opendota.com/)
+2. Search for your Steam profile
+3. Your Account ID will be in the URL (32-bit number)
 
 ### Discord Bot Setup
 
@@ -75,55 +81,30 @@ cp .env.example .env
    - Use Slash Commands
 6. Invite the bot to your server using the OAuth2 URL Generator with `applications.commands` and `bot` scopes
 
-### Running the Bot
-
-Start the bot:
-```bash
-npm start
-```
-
-For development with auto-reload:
-```bash
-npm run dev
-```
-
-### Verifying Polling is Enabled
-
-When the bot starts, you should see these log messages confirming polling is active:
-
-```
-[INFO] Polling service started (checking every 5 minutes)
-[INFO] Daily summary scheduled: 3 AM UK time (Mon-Fri), 10 PM UK time (Sat-Sun)
-```
-
-**To verify automated messages are working:**
-
-1. **Check bot logs** - Look for "Polling service started" message when bot starts
-2. **Play a match** - After finishing a game, wait up to 5 minutes (or your `POLLING_INTERVAL` setting)
-3. **Check Discord channel** - You should receive an automated notification with match details
-4. **Monitor logs** - Look for messages like "Found X new match(es)" when polling detects new games
-
-**If automated messages aren't working:**
-
-- Verify `POLLING_INTERVAL` is set in `.env` (default: 5 minutes)
-- Check that `DISCORD_CHANNEL_ID` is correct
-- Ensure bot has permission to send messages in the channel
-- Check logs for errors during update checks
-- Note: First run may not detect matches if cache is empty (this is normal - it needs a baseline)
-
 ## Commands
 
-The bot supports the following slash commands:
+| Command | Description |
+|---------|-------------|
+| `/profile` | Display your Dota 2 profile overview |
+| `/recent [limit]` | Show recent matches (default: 5, max: 10) |
+| `/stats` | Display player statistics |
+| `/heroes [limit]` | Show top heroes (default: 10, max: 20) |
+| `/live` | Check if you're in a live match |
+| `/achievements` | Display achievements/feats |
+| `/match <id>` | Get details for a specific match |
+| `/search <player> [limit]` | Search for a player's recent matches |
+| `/listfriends` | List all tracked players |
+| `/dailyall` | Show daily summary for previous day (UK time) |
+| `/rampage [day]` | Show rampages - optional day parameter |
 
-- `/profile` - Display your Dota 2 profile overview
-- `/recent [limit]` - Show your recent matches (default: 5, max: 10)
-- `/stats` - Display your player statistics
-- `/heroes [limit]` - Show your top heroes (default: 10, max: 20)
-- `/live` - Check if you are currently in a live match
-- `/achievements` - Display your achievements
-- `/match <id>` - Get details for a specific match
-- `/search <player> [limit]` - Search for a player's recent matches by name (from friends list) or Steam Account ID
-- `/listfriends` - List all players in your friends list
+### Rampage Command Examples
+
+```
+/rampage              # Show all recent rampages (top 10)
+/rampage day:0        # Today's rampages
+/rampage day:1        # Yesterday's rampages
+/rampage day:11-Jan-2026  # Specific date
+```
 
 ## Configuration
 
@@ -134,74 +115,120 @@ The bot supports the following slash commands:
 | `DISCORD_BOT_TOKEN` | Yes | Discord bot token |
 | `DISCORD_CHANNEL_ID` | Yes | Channel ID for notifications |
 | `STEAM_ACCOUNT_ID` | Yes | Your 32-bit Steam Account ID |
-| `OPENDOTA_API_KEY` | No | OpenDota API key for higher rate limits |
+| `STRATZ_API_TOKEN` | Yes | STRATZ API token for data access |
+| `DISCORD_GUILD_ID` | No | Guild ID for faster command registration |
 | `POLLING_INTERVAL` | No | Polling interval in minutes (default: 5) |
 | `CACHE_FILE` | No | Path to cache file (default: ./data/state-cache.json) |
-| `LOG_LEVEL` | No | Log level: ERROR, WARN, INFO, DEBUG (default: INFO). Use DEBUG or add _DETAILED suffix (e.g., INFO_DETAILED) for verbose logs |
-| `DISCORD_GUILD_ID` | No | Guild ID for faster command registration (development) |
-| `FRIENDS_LIST` | No | JSON string of friends list with names and account IDs (see below) |
-| `MAIN_ACCOUNT_NAME` | No | Name for your main account in friends list (default: "You") |
-| `DAILY_SUMMARY_WEEKDAY_TIME` | No | Daily summary time for weekdays in UK timezone (format: "HH:MM", default: "03:00") |
-| `DAILY_SUMMARY_WEEKEND_TIME` | No | Daily summary time for weekends in UK timezone (format: "HH:MM", default: "22:00") |
+| `LOG_LEVEL` | No | Log level (see below) |
+| `FRIENDS_LIST` | No | JSON string of friends to track |
+| `MAIN_ACCOUNT_NAME` | No | Name for main account (default: "You") |
+| `DAILY_SUMMARY_WEEKDAY_TIME` | No | Weekday summary time UK (default: "01:00") |
+| `DAILY_SUMMARY_WEEKEND_TIME` | No | Weekend summary time UK (default: "22:00") |
+
+### Log Levels
+
+Set `LOG_LEVEL` in `.env` to control logging verbosity:
+
+| Level | Description |
+|-------|-------------|
+| `ERROR` | Only errors |
+| `WARN` | Errors and warnings |
+| `INFO` | Normal operation logs (default, minimal) |
+| `DEBUG` | Verbose debugging logs |
+| `INFO_DETAILED` | INFO + detailed processing logs |
+| `DEBUG_DETAILED` | Full verbose logging |
+
+Example:
+```env
+LOG_LEVEL=INFO          # Minimal logs (recommended for production)
+LOG_LEVEL=DEBUG         # Verbose logs for debugging
+LOG_LEVEL=INFO_DETAILED # Normal + detailed processing info
+```
 
 ### Friends List Configuration
 
-To track multiple players in daily summaries, configure the `FRIENDS_LIST` environment variable as a JSON string. Each player can have multiple account IDs (for players who switch between accounts).
+Track multiple players in daily summaries:
 
-**Format:**
-```json
-{
-  "PlayerName1": ["account_id_1"],
-  "PlayerName2": ["account_id_2", "account_id_3"],
-  "PlayerName3": ["account_id_4"]
-}
-```
-
-**Example `.env` entry:**
 ```env
-FRIENDS_LIST={"DX":["76561198154222201"],"Chirri":["190274308","398580353"],"CJ":["76561198137957508"],"Chuchu":["76561198306821929","76561199062714218"],"Toy":["76561198272276415"],"SHJ":["76561198098997173"],"Venom":["76561198818382757"],"Marco":["76561198325912093"],"Sikandar":["76561198182052901"]}
+FRIENDS_LIST={"DX":["account_id"],"Chirri":["id1","id2"],"CJ":["account_id"]}
 ```
 
-**Notes:**
-- Your main account (from `STEAM_ACCOUNT_ID`) is automatically added to the friends list
-- For players with multiple accounts, the bot will automatically select the account with the most matches in the last 24 hours for the daily summary
-- Players with no matches in the last 24 hours are automatically skipped from the daily summary
-- Use `/listfriends` command to view all configured players
-- Use `/search <name>` or `/search <id>` to search for any player's recent matches
+- Players can have multiple account IDs (for smurfs/alts)
+- Bot automatically selects the account with most matches
+- Players with no matches are skipped in daily summaries
 
-### Rate Limiting
+### Example .env File
 
-- **Without API Key**: OpenDota allows 1 request per second (60 calls/min, 3000/day)
-- **With API Key**: Higher rate limits (check OpenDota documentation)
-- Dotabuff scraping has a 2-second delay between requests
-- **Daily Summary**: Automatically respects rate limits with 1-second delays between friend lookups
+```env
+# Discord Configuration
+DISCORD_BOT_TOKEN=your_bot_token_here
+DISCORD_CHANNEL_ID=your_channel_id
+DISCORD_GUILD_ID=your_guild_id
 
-### Automated Notifications
+# Steam/Dota Configuration
+STEAM_ACCOUNT_ID=your_32bit_account_id
+MAIN_ACCOUNT_NAME=YourName
 
-The bot runs a background polling service that checks for updates at regular intervals:
+# STRATZ API
+STRATZ_API_TOKEN=your_stratz_token
 
-- **Check Frequency**: Configurable via `POLLING_INTERVAL` (default: 5 minutes)
-- **New Match Detection**: Compares match IDs to detect newly completed matches
-- **Live Match Detection**: Monitors OpenDota's live matches endpoint
-- **Stat Change Detection**: Tracks MMR and Rank Tier changes
-- **State Caching**: Prevents duplicate notifications using `data/state-cache.json`
+# Friends List
+FRIENDS_LIST={"Friend1":["id1"],"Friend2":["id2"]}
 
-### Daily Summary
+# Polling
+POLLING_INTERVAL=5
 
-The bot automatically sends a daily summary of the last 24 hours:
+# Logging (INFO for minimal, DEBUG for verbose)
+LOG_LEVEL=INFO
 
-- **Weekdays (Monday-Friday)**: 3 AM UK time
-- **Weekends (Saturday-Sunday)**: 10 PM UK time
+# Daily Summary Times (UK timezone)
+DAILY_SUMMARY_WEEKDAY_TIME=01:00
+DAILY_SUMMARY_WEEKEND_TIME=22:00
+```
 
-The summary includes:
-- Total matches played (or "No matches played" if none)
+## Daily Summary
+
+The bot automatically sends a daily summary:
+
+- **Weekdays (Mon-Fri)**: Default 1:00 AM UK time
+- **Weekends (Sat-Sun)**: Default 10:00 PM UK time
+- **Time Period**: Previous day (midnight to midnight, UK time)
+- **Date Format**: `11-Jan-2026`
+
+### Summary Includes:
+
+- Total matches played
 - Win/Loss record and win rate
-- Average KDA and total K/D/A statistics
+- Average KDA and total K/D/A
 - Most played hero
 - Best match (highest KDA)
-- Worst match (lowest KDA)
+- Rampage count (if any)
 
-The summary is sent to the configured Discord channel automatically, even if no matches were played.
+Use `/dailyall` to manually trigger the summary for the previous day.
+
+## Rampage Notifications
+
+When a rampage is detected, the bot sends an enhanced notification with:
+
+- 🔥 Dramatic title and random message
+- Hero thumbnail image
+- Final KDA stats
+- Match result (Victory/Defeat)
+- GPM/XPM stats (when available)
+- Match duration
+- Hero damage and tower damage (when available)
+
+Rampages are detected through STRATZ's feats/achievements system for reliability.
+
+## Rate Limits
+
+STRATZ API (Free Tier):
+- 20 calls/second
+- 250 calls/minute
+- 2,000 calls/hour
+- 10,000 calls/day
+
+The bot automatically handles rate limiting with delays between requests.
 
 ## Project Structure
 
@@ -211,7 +238,7 @@ dota2-discord/
 │   ├── index.js                    # Main entry point
 │   ├── bot/
 │   │   └── discord-bot.js          # Discord bot client
-│   ├── commands/                   # Slash command implementations
+│   ├── commands/
 │   │   ├── command-handler.js      # Command routing
 │   │   ├── profile.js              # /profile command
 │   │   ├── recent.js               # /recent command
@@ -219,241 +246,74 @@ dota2-discord/
 │   │   ├── heroes.js               # /heroes command
 │   │   ├── live.js                 # /live command
 │   │   ├── achievements.js         # /achievements command
-│   │   └── match.js                # /match command
+│   │   ├── match.js                # /match command
+│   │   ├── search.js               # /search command
+│   │   ├── listfriends.js          # /listfriends command
+│   │   ├── dailyall.js             # /dailyall command
+│   │   └── rampage.js              # /rampage command
 │   ├── services/
-│   │   ├── opendota-client.js      # OpenDota API client
-│   │   ├── dotabuff-scraper.js    # Dotabuff scraper
-│   │   └── polling-service.js      # Polling scheduler & daily summary
+│   │   ├── stratz-client.js        # STRATZ GraphQL API client
+│   │   └── polling-service.js      # Polling & daily summary
 │   ├── core/
 │   │   ├── data-processor.js       # Data processing logic
-│   │   └── state-cache.js          # State caching
+│   │   ├── state-cache.js          # State caching
+│   │   └── friends-manager.js      # Friends list management
 │   └── utils/
 │       ├── logger.js               # Logging utility
 │       ├── config.js               # Configuration loader
 │       ├── message-formatter.js    # Discord embed formatter
-│       ├── hero-names.js           # Hero name mapping (fallback)
-│       └── hero-loader.js          # Dynamic hero loading from API
+│       └── hero-loader.js          # Hero loading from API
 ├── data/
-│   └── state-cache.json           # Cached state data (auto-generated)
-├── .env.example                   # Environment variables template
+│   └── state-cache.json            # Cached state (auto-generated)
+├── .env                            # Environment configuration
 ├── .gitignore
 ├── package.json
-├── README.md
-└── DEPLOYMENT.md                   # Deployment guide for various platforms
+└── README.md
 ```
 
 ## Deployment
 
-### Quick Start: Deploy to Cybrancee.com
+### Quick Start
 
-1. **Push to GitHub** (see [GitHub Setup](#github-setup) below)
-2. **Connect Repository** in Cybrancee dashboard:
-   - GIT REPO ADDRESS: `https://github.com/YOUR_USERNAME/dota2-discord-bot`
-   - BOT JS FILE: `src/index.js`
-   - INSTALL BRANCH: `main`
-   - AUTO UPDATE: ON
-   - NPM INSTALL: ON (important!)
-3. **Set Environment Variables**:
-   - `DISCORD_BOT_TOKEN`
-   - `DISCORD_CHANNEL_ID`
-   - `STEAM_ACCOUNT_ID`
-   - `OPENDOTA_API_KEY` (optional but recommended)
-   - `POLLING_INTERVAL=5` (optional)
-   - `LOG_LEVEL=INFO` (optional)
-4. **Set Start Command**: `npm start`
-5. **Deploy** and verify bot is online
+1. Push to GitHub
+2. Deploy to your preferred hosting (Heroku, Railway, VPS, etc.)
+3. Set environment variables
+4. Start with `npm start`
 
-> 📖 **Detailed deployment guide**: See [DEPLOYMENT.md](DEPLOYMENT.md) for comprehensive deployment instructions for other platforms.
+### PM2 (VPS/Server)
 
-### Deploying to Other Hosting Services
-
-This bot can be deployed to any Node.js hosting service. Here are instructions for common platforms:
-
-#### Using Cybrancee.com (Discord Bot Hosting)
-
-1. **Prepare Your Repository**
-   - Push your code to GitHub (see [GitHub Setup](#github-setup) below)
-   - Make sure `.env` is in `.gitignore` (it should be by default)
-
-2. **On Cybrancee.com Dashboard**
-   - Connect your GitHub repository
-   - Set up environment variables in the hosting dashboard:
-     - `DISCORD_BOT_TOKEN`
-     - `DISCORD_CHANNEL_ID`
-     - `STEAM_ACCOUNT_ID`
-     - `OPENDOTA_API_KEY` (optional)
-     - `POLLING_INTERVAL` (optional, default: 5)
-     - `LOG_LEVEL` (optional, default: INFO)
-
-3. **Start Command**
-   - Set the start command to: `npm start`
-   - The bot will automatically install dependencies on first deploy
-
-4. **File Structure**
-   - Ensure `package.json` is in the root directory
-   - The bot expects the `src/` directory structure as provided
-
-#### Using Other Hosting Services
-
-**Heroku:**
 ```bash
-# Add Procfile
-echo "worker: npm start" > Procfile
-
-# Deploy
-git push heroku main
-```
-
-**Railway:**
-- Connect GitHub repository
-- Set environment variables
-- Railway auto-detects Node.js and runs `npm start`
-
-**VPS/Server:**
-```bash
-# Clone repository
-git clone <your-repo-url>
-cd dota2-discord
-
-# Install dependencies
-npm install
-
-# Set up environment variables
-cp .env.example .env
-nano .env  # Edit with your values
-
-# Use PM2 for process management
 npm install -g pm2
 pm2 start src/index.js --name dota2-bot
 pm2 save
-pm2 startup  # Follow instructions to enable on boot
+pm2 startup
 ```
-
-### GitHub Setup
-
-1. **Initialize Git Repository**
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit: Dota 2 Discord Bot"
-   ```
-
-2. **Create GitHub Repository**
-   - Go to [GitHub](https://github.com) and create a new repository
-   - Don't initialize with README (we already have one)
-
-3. **Push to GitHub**
-   ```bash
-   git remote add origin https://github.com/YOUR_USERNAME/dota2-discord.git
-   git branch -M main
-   git push -u origin main
-   ```
-
-4. **Keep Repository Updated**
-   ```bash
-   git add .
-   git commit -m "Your commit message"
-   git push
-   ```
 
 ## Troubleshooting
 
-### Bot doesn't respond to commands / "The application did not respond" error
+### Bot doesn't respond to commands
 
-1. Make sure the bot is online in Discord
-2. Check that commands are registered (may take up to 1 hour for global commands)
-3. For faster testing, set `DISCORD_GUILD_ID` in `.env` for instant guild command registration
-4. Verify bot has proper permissions in the channel
-5. If you see "The application did not respond":
-   - This usually means API calls are taking too long
-   - Check your OpenDota API key is set (improves rate limits)
-   - Check bot logs for API errors
-   - Try the command again after a moment
-
-### API rate limit errors
-
-1. Get an OpenDota API key from [OpenDota API Keys](https://www.opendota.com/api-keys)
-2. Add it to your `.env` file as `OPENDOTA_API_KEY`
-3. The bot will automatically use higher rate limits
+1. Verify bot is online in Discord
+2. Check command registration (set `DISCORD_GUILD_ID` for instant registration)
+3. Verify bot permissions in channel
+4. Check logs for errors
 
 ### No data returned
 
-1. Verify your `STEAM_ACCOUNT_ID` is correct (32-bit number)
-2. Check that your Dota 2 profile is public
-3. Ensure OpenDota has parsed your matches (may take time for new accounts)
-
-### Automated messages not working
-
-1. Check that polling service started (look for "Polling service started" in logs)
-2. Verify `POLLING_INTERVAL` is set correctly (default: 5 minutes)
-3. Check that `DISCORD_CHANNEL_ID` is correct
-4. Ensure bot has permission to send messages in the channel
-5. Check logs for errors during update checks
-6. Note: First run may not detect matches if cache is empty (this is normal)
+1. Verify `STEAM_ACCOUNT_ID` is correct
+2. Check `STRATZ_API_TOKEN` is valid
+3. Ensure Dota 2 profile is public
 
 ### Daily summary not sending
 
-1. Verify bot is running at the scheduled time:
-   - Weekdays: 3 AM UK time
-   - Weekends: 10 PM UK time
-2. Check logs for "Generating daily summary..." messages
-3. Ensure bot has permission to send messages in the channel
-4. Daily summary will send even if no matches were played (shows "No matches played in the last 24 hours" message)
+1. Verify bot is running at scheduled time
+2. Check `LOG_LEVEL=DEBUG` for detailed logs
+3. Ensure bot has permission to send in channel
 
-### Dotabuff scraping fails
+### Rate limit errors
 
-- Dotabuff scraping may fail if the site structure changes
-- Achievements and some features may not be available
-- The bot will continue to work with OpenDota data
-
-## Development
-
-### Project Structure
-
-```
-dota2-discord/
-├── src/
-│   ├── index.js                    # Main entry point
-│   ├── bot/
-│   │   └── discord-bot.js          # Discord bot client
-│   ├── commands/                   # Slash command implementations
-│   │   ├── command-handler.js      # Command routing
-│   │   ├── profile.js              # /profile command
-│   │   ├── recent.js               # /recent command
-│   │   ├── stats.js                # /stats command
-│   │   ├── heroes.js               # /heroes command
-│   │   ├── live.js                 # /live command
-│   │   ├── achievements.js         # /achievements command
-│   │   └── match.js                # /match command
-│   ├── services/
-│   │   ├── opendota-client.js      # OpenDota API client
-│   │   ├── dotabuff-scraper.js     # Dotabuff scraper
-│   │   └── polling-service.js      # Polling scheduler & daily summary
-│   ├── core/
-│   │   ├── data-processor.js       # Data processing logic
-│   │   └── state-cache.js          # State caching
-│   └── utils/
-│       ├── logger.js               # Logging utility
-│       ├── config.js               # Configuration loader
-│       ├── message-formatter.js    # Discord embed formatter
-│       ├── hero-names.js           # Static hero name mapping (fallback)
-│       └── hero-loader.js          # Dynamic hero loading from API
-├── data/
-│   └── state-cache.json           # Cached state data (auto-generated)
-├── .env.example                   # Environment variables template
-├── .gitignore
-├── package.json
-├── README.md
-└── DEPLOYMENT.md                   # Deployment guide for various platforms
-```
-
-### Key Features Implementation
-
-- **Hero Name Mapping**: Uses OpenDota API `/heroes` endpoint for accurate hero_id to name mapping
-- **Match Data**: Uses `/players/{id}/matches` endpoint for better data accuracy
-- **State Caching**: Prevents duplicate notifications and tracks last known state
-- **Error Handling**: Comprehensive error handling with retry logic
-- **Rate Limiting**: Respects OpenDota API rate limits automatically
+- The bot handles rate limits automatically
+- If issues persist, check STRATZ API usage dashboard
 
 ## License
 
@@ -461,18 +321,9 @@ MIT
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+Contributions welcome! Please submit a Pull Request.
 
 ## Acknowledgments
 
-- [OpenDota](https://www.opendota.com/) for the excellent API and hero data
-- [Dotabuff](https://www.dotabuff.com/) for additional data sources
+- [STRATZ](https://stratz.com/) for the excellent GraphQL API
 - [Discord.js](https://discord.js.org/) for the Discord library
-- [OpenDota API Documentation](https://docs.opendota.com/) for comprehensive API reference
-

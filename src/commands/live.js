@@ -3,13 +3,14 @@ import { logger } from '../utils/logger.js';
 
 /**
  * /live command - Check live match status
+ * Uses STRATZ API
  */
 export const liveCommand = {
   data: new SlashCommandBuilder()
     .setName('live')
     .setDescription('Check if you are currently in a live match'),
 
-  async execute(interaction, opendotaClient, messageFormatter, accountId) {
+  async execute(interaction, stratzClient, messageFormatter, accountId) {
     // Defer immediately to prevent interaction timeout
     try {
       await interaction.deferReply();
@@ -22,18 +23,8 @@ export const liveCommand = {
     }
 
     try {
-      const liveMatches = await opendotaClient.getLiveMatches();
-
-      if (!liveMatches || liveMatches.length === 0) {
-        await interaction.editReply('No live matches found.');
-        return;
-      }
-
-      // Check if player is in any live match
-      const accountIdNum = parseInt(accountId);
-      const playerMatch = liveMatches.find(match => 
-        match.players?.some(player => player.account_id === accountIdNum)
-      );
+      // Check for live match using STRATZ
+      const playerMatch = await stratzClient.getPlayerLiveMatch(accountId);
 
       if (playerMatch) {
         const embed = messageFormatter.formatLiveMatch(playerMatch);
@@ -47,4 +38,3 @@ export const liveCommand = {
     }
   }
 };
-

@@ -1,7 +1,7 @@
 import { logger } from '../utils/logger.js';
 
 /**
- * Data processor to normalize and merge data from OpenDota and Dotabuff
+ * Data processor to normalize STRATZ API data for Discord display
  */
 export class DataProcessor {
   constructor(stateCache, accountId) {
@@ -10,32 +10,38 @@ export class DataProcessor {
   }
 
   /**
-   * Process player profile data
+   * Process player profile data from STRATZ
    */
-  processPlayerProfile(opendotaData, dotabuffData = null) {
-    const profile = {
-      accountId: opendotaData.profile?.account_id || opendotaData.account_id,
-      name: opendotaData.profile?.personaname || opendotaData.personaname || 'Unknown',
-      avatar: opendotaData.profile?.avatarfull || opendotaData.avatarfull,
-      steamId: opendotaData.profile?.steamid || opendotaData.steamid,
-      mmr: opendotaData.solo_competitive_rank || opendotaData.competitive_rank || null,
-      rankTier: opendotaData.rank_tier || null,
-      leaderboardRank: opendotaData.leaderboard_rank || null
-    };
+  processPlayerProfile(playerData) {
+    if (!playerData) return null;
 
-    // Merge Dotabuff data if available
-    if (dotabuffData) {
-      if (dotabuffData.name) profile.name = dotabuffData.name;
-      if (dotabuffData.mmr) profile.mmr = dotabuffData.mmr;
-      if (dotabuffData.rank) profile.rankText = dotabuffData.rank;
-    }
+    const steamAccount = playerData.steamAccount || {};
+    
+    const profile = {
+      accountId: playerData.steamAccountId || steamAccount.id,
+      name: steamAccount.name || 'Unknown',
+      avatar: steamAccount.avatar,
+      steamId: steamAccount.id,
+      // STRATZ uses seasonRank (e.g., 62 = Ancient 2)
+      rankTier: steamAccount.seasonRank || null,
+      leaderboardRank: steamAccount.seasonLeaderboardRank || null,
+      matchCount: playerData.matchCount || 0,
+      winCount: playerData.winCount || 0,
+      behaviorScore: playerData.behaviorScore || null
+    };
 
     return profile;
   }
 
   /**
-   * Process recent matches
-   * Note: hero_id should already be corrected by fetching full match details
+   * Process recent matches from STRATZ format
+   * STRATZ match format:
+   * - id (match ID)
+   * - didRadiantWin (boolean)
+   * - durationSeconds
+   * - startDateTime (unix timestamp)
+   * - players[0] (filtered to current player):
+   *   - heroId, isRadiant, kills, deaths, assists, etc.
    */
   processRecentMatches(matches) {
     if (!matches || !Array.isArray(matches)) {
@@ -43,25 +49,33 @@ export class DataProcessor {
     }
 
     return matches.map((match) => {
-      // hero_id should be correct if full match details were fetched
-      // Otherwise, use the hero_id from recentMatches (may have issues)
-      const heroId = match.hero_id;
-      const kills = match.kills ?? 0;
-      const deaths = match.deaths ?? 0;
-      const assists = match.assists ?? 0;
-      const playerSlot = match.player_slot;
+      // STRATZ returns players filtered to the requested account
+      const player = match.players?.[0] || {};
+      
+      const heroId = player.heroId;
+      const kills = player.kills ?? 0;
+      const deaths = player.deaths ?? 0;
+      const assists = player.assists ?? 0;
+      
+      // Determine win: player's team (isRadiant) matches didRadiantWin
+      const isRadiant = player.isRadiant;
+      const win = isRadiant === match.didRadiantWin;
       
       return {
-        matchId: match.match_id,
+        matchId: match.id,
         heroId: heroId,
         kills,
         deaths,
         assists,
-        win: match.radiant_win === (playerSlot < 128),
-        duration: match.duration,
-        startTime: match.start_time,
-        gameMode: match.game_mode,
-        lobbyType: match.lobby_type,
+        win,
+        duration: match.durationSeconds,
+        startTime: match.startDateTime,
+        gameMode: match.gameMode,
+        lobbyType: match.lobbyType,
+        goldPerMinute: player.goldPerMinute,
+        experiencePerMinute: player.experiencePerMinute,
+        lastHits: player.numLastHits,
+        denies: player.numDenies,
         kda: `${kills}/${deaths}/${assists} (${this.calculateKDA(kills, deaths, assists)})`
       };
     });
@@ -78,13 +92,17 @@ export class DataProcessor {
   }
 
   /**
-   * Process player statistics
+   * Process player statistics from STRATZ
    */
-  processPlayerStats(totalsData, winLossData) {
+  processPlayerStats(playerData, winLossData = null) {
+    // STRATZ provides matchCount and winCount directly
+    const wins = winLossData?.win ?? playerData?.winCount ?? 0;
+    const losses = winLossData?.lose ?? (playerData?.matchCount - playerData?.winCount) ?? 0;
+    
     const stats = {
-      wins: winLossData?.win || 0,
-      losses: winLossData?.lose || 0,
-      totalMatches: (winLossData?.win || 0) + (winLossData?.lose || 0),
+      wins,
+      losses,
+      totalMatches: wins + losses,
       winRate: 0
     };
 
@@ -92,22 +110,64 @@ export class DataProcessor {
       stats.winRate = ((stats.wins / stats.totalMatches) * 100).toFixed(2);
     }
 
-    // Process totals if available
-    if (totalsData && Array.isArray(totalsData)) {
-      totalsData.forEach(total => {
-        if (total.field === 'kills') stats.avgKills = (total.sum / total.n).toFixed(2);
-        if (total.field === 'deaths') stats.avgDeaths = (total.sum / total.n).toFixed(2);
-        if (total.field === 'assists') stats.avgAssists = (total.sum / total.n).toFixed(2);
-        if (total.field === 'gold_per_min') stats.avgGPM = (total.sum / total.n).toFixed(0);
-        if (total.field === 'xp_per_min') stats.avgXPM = (total.sum / total.n).toFixed(0);
-      });
-    }
+    // Note: STRATZ doesn't provide average stats in the basic query
+    // These will be calculated from recent matches if needed
+    stats.avgKills = null;
+    stats.avgDeaths = null;
+    stats.avgAssists = null;
+    stats.avgGPM = null;
+    stats.avgXPM = null;
 
     return stats;
   }
 
   /**
-   * Process hero statistics
+   * Process player statistics with recent matches for averages
+   */
+  processPlayerStatsWithMatches(playerData, winLossData, recentMatches) {
+    const stats = this.processPlayerStats(playerData, winLossData);
+    
+    // Calculate averages from recent matches
+    if (recentMatches && recentMatches.length > 0) {
+      const processed = this.processRecentMatches(recentMatches);
+      
+      let totalKills = 0, totalDeaths = 0, totalAssists = 0;
+      let totalGPM = 0, totalXPM = 0;
+      let gpmCount = 0, xpmCount = 0;
+      
+      processed.forEach(match => {
+        totalKills += match.kills;
+        totalDeaths += match.deaths;
+        totalAssists += match.assists;
+        
+        if (match.goldPerMinute) {
+          totalGPM += match.goldPerMinute;
+          gpmCount++;
+        }
+        if (match.experiencePerMinute) {
+          totalXPM += match.experiencePerMinute;
+          xpmCount++;
+        }
+      });
+      
+      const count = processed.length;
+      stats.avgKills = (totalKills / count).toFixed(2);
+      stats.avgDeaths = (totalDeaths / count).toFixed(2);
+      stats.avgAssists = (totalAssists / count).toFixed(2);
+      
+      if (gpmCount > 0) {
+        stats.avgGPM = (totalGPM / gpmCount).toFixed(0);
+      }
+      if (xpmCount > 0) {
+        stats.avgXPM = (totalXPM / xpmCount).toFixed(0);
+      }
+    }
+    
+    return stats;
+  }
+
+  /**
+   * Process hero statistics from STRATZ heroesPerformance
    */
   processHeroStats(heroesData) {
     if (!heroesData || !Array.isArray(heroesData)) {
@@ -116,23 +176,24 @@ export class DataProcessor {
 
     return heroesData
       .map(hero => {
-        // OpenDota heroes endpoint doesn't provide avg_kills/deaths/assists
-        // These would need to be calculated from match data which is expensive
-        // For now, we'll show games, wins, and win rate only
+        const games = hero.matchCount || 0;
+        const wins = hero.winCount || 0;
+        
         return {
-          heroId: hero.hero_id,
-          games: hero.games || 0,
-          wins: hero.win || 0,
-          losses: (hero.games || 0) - (hero.win || 0),
-          winRate: hero.games > 0 ? ((hero.win / hero.games) * 100).toFixed(2) : '0.00',
-          lastPlayed: hero.last_played || null
+          heroId: hero.heroId,
+          games,
+          wins,
+          losses: games - wins,
+          winRate: games > 0 ? ((wins / games) * 100).toFixed(2) : '0.00',
+          lastPlayed: hero.lastPlayedDateTime || null,
+          imp: hero.imp || null // STRATZ impact score
         };
       })
       .sort((a, b) => b.games - a.games); // Sort by games played
   }
 
   /**
-   * Process match details
+   * Process match details from STRATZ
    */
   processMatchDetails(matchData) {
     if (!matchData) {
@@ -140,30 +201,29 @@ export class DataProcessor {
     }
 
     // Find player in match
-    const playerSlot = matchData.players?.findIndex(p => 
-      p.account_id === parseInt(this.accountId)
+    const accountIdNum = parseInt(this.accountId);
+    const player = matchData.players?.find(p => 
+      p.steamAccountId === accountIdNum
     );
 
-    const player = playerSlot >= 0 ? matchData.players[playerSlot] : null;
-
     return {
-      matchId: matchData.match_id,
-      duration: matchData.duration,
-      startTime: matchData.start_time,
-      gameMode: matchData.game_mode,
-      lobbyType: matchData.lobby_type,
-      radiantWin: matchData.radiant_win,
+      matchId: matchData.id,
+      duration: matchData.durationSeconds,
+      startTime: matchData.startDateTime,
+      gameMode: matchData.gameMode,
+      lobbyType: matchData.lobbyType,
+      radiantWin: matchData.didRadiantWin,
       player: player ? {
-        heroId: player.hero_id,
+        heroId: player.heroId,
         kills: player.kills,
         deaths: player.deaths,
         assists: player.assists,
         kda: this.calculateKDA(player.kills, player.deaths, player.assists),
-        goldPerMin: player.gold_per_min,
-        xpPerMin: player.xp_per_min,
-        lastHits: player.last_hits,
-        denies: player.denies,
-        win: matchData.radiant_win === (player.player_slot < 128)
+        goldPerMin: player.goldPerMinute,
+        xpPerMin: player.experiencePerMinute,
+        lastHits: player.numLastHits,
+        denies: player.numDenies,
+        win: player.isRadiant === matchData.didRadiantWin
       } : null
     };
   }
@@ -179,16 +239,16 @@ export class DataProcessor {
     const lastMatchId = this.stateCache.getLastMatchId();
     if (!lastMatchId) {
       // First run, cache the latest match
-      this.stateCache.setLastMatchId(matches[0].match_id);
+      this.stateCache.setLastMatchId(matches[0].matchId);
       return [];
     }
 
     // Find matches newer than last cached
-    const newMatches = matches.filter(match => match.match_id > lastMatchId);
+    const newMatches = matches.filter(match => match.matchId > lastMatchId);
     
     if (newMatches.length > 0) {
       // Update cache with latest match ID
-      this.stateCache.setLastMatchId(newMatches[0].match_id);
+      this.stateCache.setLastMatchId(newMatches[0].matchId);
     }
 
     return newMatches;
@@ -210,6 +270,7 @@ export class DataProcessor {
 
   /**
    * Process daily summary from matches
+   * Note: Rampage stats are added separately by the polling service after fetching feats
    */
   processDailySummary(matches) {
     if (!matches || matches.length === 0) {
@@ -224,7 +285,8 @@ export class DataProcessor {
         avgKDA: 0,
         totalKills: 0,
         totalDeaths: 0,
-        totalAssists: 0
+        totalAssists: 0,
+        rampages: 0
       };
     }
 
@@ -293,8 +355,45 @@ export class DataProcessor {
       avgKDA,
       totalKills,
       totalDeaths,
-      totalAssists
+      totalAssists,
+      rampages: 0
     };
   }
-}
 
+  /**
+   * Process achievements/feats from STRATZ
+   */
+  processAchievements(feats) {
+    if (!feats || !Array.isArray(feats)) {
+      return [];
+    }
+
+    // STRATZ feats have: type, value, heroId, matchId
+    // Map to achievement format
+    return feats.map(feat => ({
+      name: this.getFeatTypeName(feat.type),
+      description: `Value: ${feat.value}`,
+      heroId: feat.heroId,
+      matchId: feat.matchId,
+      unlocked: true
+    }));
+  }
+
+  /**
+   * Get human-readable feat type name
+   */
+  getFeatTypeName(type) {
+    const featTypes = {
+      'RAMPAGE': 'Rampage',
+      'ULTRA_KILL': 'Ultra Kill',
+      'TRIPLE_KILL': 'Triple Kill',
+      'GODLIKE': 'Godlike Streak',
+      'COURIER_KILL': 'Courier Sniper',
+      'MEGA_CREEPS': 'Mega Creeps',
+      'DIVINE_RAPIER': 'Rapier Carrier',
+      'FIRST_BLOOD': 'First Blood',
+      // Add more as needed
+    };
+    return featTypes[type] || type;
+  }
+}

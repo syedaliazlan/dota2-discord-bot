@@ -1,27 +1,21 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { loadHeroesFromAPI } from '../utils/hero-loader.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * /search command - Search for player's recent matches by ID or name
+ * /search command - Search for a player by name
+ * Uses STRATZ API
  */
 export const searchCommand = {
   data: new SlashCommandBuilder()
     .setName('search')
-    .setDescription('Search for a player\'s recent matches by ID or name')
+    .setDescription('Search for a player by name')
     .addStringOption(option =>
-      option.setName('player')
-        .setDescription('Player name (from friends list), Steam Account ID, or Dota 2 Account ID')
+      option.setName('name')
+        .setDescription('Player name to search for')
         .setRequired(true)
-    )
-    .addIntegerOption(option =>
-      option.setName('limit')
-        .setDescription('Number of matches to show (default: 5)')
-        .setMinValue(1)
-        .setMaxValue(10)
     ),
 
-  async execute(interaction, opendotaClient, dataProcessor, messageFormatter, friendsManager) {
+  async execute(interaction, stratzClient, dataProcessor, messageFormatter, friendsManager) {
     // Defer immediately to prevent interaction timeout
     try {
       await interaction.deferReply();
@@ -34,90 +28,41 @@ export const searchCommand = {
     }
 
     try {
-      const playerQuery = interaction.options.getString('player');
-      const limit = interaction.options.getInteger('limit') || 5;
-
-      // Find player using friends manager
-      if (!friendsManager) {
-        await interaction.editReply('Friends list not configured. Please configure FRIENDS_LIST in .env file.');
-        return;
-      }
-
-      const player = friendsManager.findPlayer(playerQuery);
-      if (!player) {
-        await interaction.editReply(`Player "${playerQuery}" not found in friends list. Use /listfriends to see available players.`);
-        return;
-      }
-
-      // Load heroes from API
-      const heroMap = await loadHeroesFromAPI(opendotaClient);
-
-      // Fetch matches
-      const matchesData = await opendotaClient.getPlayerMatches(player.accountId, limit);
-
-      if (!matchesData || matchesData.length === 0) {
-        await interaction.editReply(`No recent matches found for **${player.name}**.`);
-        return;
-      }
-
-      const accountIdNum = parseInt(player.accountId);
+      const searchName = interaction.options.getString('name');
       
-      // Process matches
-      const matchesWithDetails = matchesData.slice(0, limit).map((match) => {
-        if (match.players && Array.isArray(match.players) && match.players.length > 0) {
-          const playerData = match.players.find(p => p.account_id === accountIdNum);
+      // First check if it's in friends list
+      if (friendsManager) {
+        const friend = friendsManager.getFriend(searchName);
+        if (friend) {
+          const accountId = friend.ids[0];
+          const playerData = await stratzClient.getPlayer(accountId);
           
-          if (playerData && playerData.hero_id !== undefined) {
-            match.hero_id = playerData.hero_id;
-            match.kills = playerData.kills ?? match.kills;
-            match.deaths = playerData.deaths ?? match.deaths;
-            match.assists = playerData.assists ?? match.assists;
+          if (playerData) {
+            const profile = dataProcessor.processPlayerProfile(playerData);
+            const embed = messageFormatter.formatProfile(profile);
+            embed.setTitle(`👤 ${friend.name}'s Profile`);
+            await interaction.editReply({ embeds: [embed] });
+            return;
           }
         }
-        
-        return match;
-      });
-      
-      // If matches don't have players array, fetch full match details
-      const needsDetails = matchesWithDetails.filter(m => !m.players || m.players.length === 0);
-      if (needsDetails.length > 0) {
-        await Promise.all(needsDetails.map(async (match) => {
-          try {
-            const fullMatch = await opendotaClient.getMatch(match.match_id);
-            if (fullMatch?.players?.length > 0) {
-              const playerData = fullMatch.players.find(p => p.account_id === accountIdNum);
-              if (playerData?.hero_id !== undefined) {
-                match.hero_id = playerData.hero_id;
-                match.kills = playerData.kills ?? match.kills;
-                match.deaths = playerData.deaths ?? match.deaths;
-                match.assists = playerData.assists ?? match.assists;
-              }
-            }
-          } catch (error) {
-            // Silently handle errors
-          }
-        }));
       }
-
-      const matches = dataProcessor.processRecentMatches(matchesWithDetails);
-      const embed = messageFormatter.formatRecentMatches(matches, limit);
       
-      // Update embed title to include player name
-      embed.setTitle(`🎮 Recent Matches - ${player.name}`);
-
-      await interaction.editReply({ embeds: [embed] });
-      logger.info(`Search completed for ${player.name} (${player.accountId}) - ${matches.length} matches`);
+      // If not in friends list, try to search by account ID if it's a number
+      if (!isNaN(searchName)) {
+        const playerData = await stratzClient.getPlayer(searchName);
+        
+        if (playerData) {
+          const profile = dataProcessor.processPlayerProfile(playerData);
+          const embed = messageFormatter.formatProfile(profile);
+          await interaction.editReply({ embeds: [embed] });
+          return;
+        }
+      }
+      
+      await interaction.editReply(`Could not find player "${searchName}". Try using their Steam Account ID or add them to your friends list.`);
     } catch (error) {
       logger.error('Error executing search command:', error);
-      
-      // Provide user-friendly error messages
-      if (error.code === 'API_TIMEOUT' || error.message?.includes('timeout')) {
-        await interaction.editReply('⏱️ The OpenDota API is slow or overloaded. Please try again in a few moments.');
-      } else {
-        await interaction.editReply('An error occurred while searching for matches.');
-      }
+      await interaction.editReply('An error occurred while searching for the player.');
     }
   }
 };
-
-

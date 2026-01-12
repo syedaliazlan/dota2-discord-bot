@@ -3,13 +3,14 @@ import { logger } from '../utils/logger.js';
 
 /**
  * /profile command - Display player profile overview
+ * Uses STRATZ API
  */
 export const profileCommand = {
   data: new SlashCommandBuilder()
     .setName('profile')
     .setDescription('Display your Dota 2 profile overview'),
 
-  async execute(interaction, opendotaClient, dotabuffScraper, dataProcessor, messageFormatter, accountId) {
+  async execute(interaction, stratzClient, dataProcessor, messageFormatter, accountId) {
     // Defer immediately to prevent interaction timeout
     try {
       await interaction.deferReply();
@@ -22,19 +23,16 @@ export const profileCommand = {
     }
 
     try {
-      // Fetch data from both sources
-      const [opendotaData, dotabuffData] = await Promise.all([
-        opendotaClient.getPlayer(accountId),
-        dotabuffScraper.getPlayerProfile(accountId).catch(() => null)
-      ]);
+      // Fetch data from STRATZ
+      const playerData = await stratzClient.getPlayer(accountId);
 
-      if (!opendotaData) {
+      if (!playerData) {
         await interaction.editReply('Failed to fetch profile data. Please try again later.');
         return;
       }
 
       // Process and format
-      const profile = dataProcessor.processPlayerProfile(opendotaData, dotabuffData);
+      const profile = dataProcessor.processPlayerProfile(playerData);
       const embed = messageFormatter.formatProfile(profile);
 
       await interaction.editReply({ embeds: [embed] });
@@ -44,4 +42,3 @@ export const profileCommand = {
     }
   }
 };
-

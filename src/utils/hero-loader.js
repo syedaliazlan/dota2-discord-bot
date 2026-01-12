@@ -1,16 +1,16 @@
 import { logger } from './logger.js';
 
 /**
- * Load hero names from OpenDota API and create mapping
+ * Load hero names from STRATZ API and create mapping
  * This ensures we have the correct hero_id to name mapping
  */
 let heroMap = null;
 let heroMapPromise = null;
 
 /**
- * Load heroes from OpenDota API
+ * Load heroes from STRATZ API
  */
-export async function loadHeroesFromAPI(opendotaClient) {
+export async function loadHeroesFromAPI(stratzClient) {
   if (heroMap) {
     return heroMap;
   }
@@ -21,8 +21,8 @@ export async function loadHeroesFromAPI(opendotaClient) {
 
   heroMapPromise = (async () => {
     try {
-      logger.info('Fetching heroes list from OpenDota API...');
-      const heroes = await opendotaClient.getHeroes();
+      logger.info('Fetching heroes list from STRATZ API...');
+      const heroes = await stratzClient.getHeroes();
       
       if (!heroes) {
         logger.warn('No heroes data received from API, using empty map');
@@ -33,9 +33,10 @@ export async function loadHeroesFromAPI(opendotaClient) {
       
       if (Array.isArray(heroes)) {
         heroes.forEach(hero => {
-          heroMap[hero.id] = hero.localized_name || hero.name;
+          // STRATZ uses displayName for the localized name
+          heroMap[hero.id] = hero.displayName || hero.name;
         });
-        logger.info(`Loaded ${Object.keys(heroMap).length} heroes from API`);
+        logger.info(`Loaded ${Object.keys(heroMap).length} heroes from STRATZ API`);
       } else {
         logger.warn('Heroes data is not an array, using empty map');
         return {};
@@ -61,4 +62,3 @@ export function getHeroNameFromAPI(heroId, heroMap) {
   }
   return heroMap[heroId] || null;
 }
-

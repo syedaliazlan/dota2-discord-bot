@@ -66,11 +66,8 @@ export function loadConfig() {
     steam: {
       accountId: process.env.STEAM_ACCOUNT_ID
     },
-    opendota: {
-      apiKey: (process.env.OPENDOTA_API_KEY && process.env.OPENDOTA_API_KEY.trim() !== '') 
-        ? process.env.OPENDOTA_API_KEY.trim() 
-        : null,
-      baseUrl: 'https://api.opendota.com/api'
+    stratz: {
+      apiToken: process.env.STRATZ_API_TOKEN || null
     },
     polling: {
       interval: parseInt(process.env.POLLING_INTERVAL || '5', 10) // minutes

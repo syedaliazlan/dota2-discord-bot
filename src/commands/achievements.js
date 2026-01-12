@@ -2,14 +2,15 @@ import { SlashCommandBuilder } from 'discord.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * /achievements command - Display achievements
+ * /achievements command - Display achievements (feats)
+ * Uses STRATZ API feats endpoint
  */
 export const achievementsCommand = {
   data: new SlashCommandBuilder()
     .setName('achievements')
     .setDescription('Display your achievements'),
 
-  async execute(interaction, dotabuffScraper, messageFormatter, accountId) {
+  async execute(interaction, stratzClient, dataProcessor, messageFormatter, accountId) {
     // Defer immediately to prevent interaction timeout
     try {
       await interaction.deferReply();
@@ -22,14 +23,16 @@ export const achievementsCommand = {
     }
 
     try {
-      const achievements = await dotabuffScraper.getPlayerAchievements(accountId);
+      // Fetch achievements from STRATZ
+      const feats = await stratzClient.getPlayerAchievements(accountId);
 
+      const achievements = dataProcessor.processAchievements(feats);
       const embed = messageFormatter.formatAchievements(achievements);
+      
       await interaction.editReply({ embeds: [embed] });
     } catch (error) {
       logger.error('Error executing achievements command:', error);
-      await interaction.editReply('An error occurred while fetching achievements. Note: Achievements may not be available from Dotabuff.');
+      await interaction.editReply('An error occurred while fetching achievements.');
     }
   }
 };
-

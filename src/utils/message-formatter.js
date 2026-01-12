@@ -383,15 +383,24 @@ export class MessageFormatter {
 
   /**
    * Format daily summary embed
+   * @param {Object} summary - The summary data
+   * @param {string} dateString - Optional date string to display
    */
-  formatDailySummary(summary) {
+  formatDailySummary(summary, dateString = null) {
+    const title = dateString 
+      ? `📊 Daily Summary (${dateString})`
+      : '📊 Daily Summary (Yesterday)';
+    
     const embed = new EmbedBuilder()
-      .setTitle('📊 Daily Summary (Last 24 Hours)')
+      .setTitle(title)
       .setColor(0x00AE86)
       .setTimestamp();
 
     if (summary.totalMatches === 0) {
-      embed.setDescription('No matches played in the last 24 hours.');
+      const noMatchesText = dateString 
+        ? `No matches played on ${dateString}.`
+        : 'No matches played yesterday.';
+      embed.setDescription(noMatchesText);
       return embed;
     }
 
@@ -417,6 +426,15 @@ export class MessageFormatter {
       }
     ];
 
+    // Add rampage stats if any
+    if (summary.rampages > 0) {
+      fields.push({
+        name: '🔥 Rampages',
+        value: `**${summary.rampages}** Rampage${summary.rampages > 1 ? 's' : ''}`,
+        inline: true
+      });
+    }
+
     if (summary.bestMatch) {
       const bestHeroName = this.getHeroName(summary.bestMatch.heroId);
       fields.push({
@@ -441,15 +459,24 @@ export class MessageFormatter {
 
   /**
    * Format multi-player daily summary embed with modern Discord UI
+   * @param {Array} playerSummaries - Array of player summaries
+   * @param {string} dateString - Optional date string to display (e.g., "11/1/2026")
    */
-  formatMultiPlayerDailySummary(playerSummaries) {
+  formatMultiPlayerDailySummary(playerSummaries, dateString = null) {
+    const title = dateString 
+      ? `📊 Daily Summary (${dateString})`
+      : '📊 Daily Summary (Yesterday)';
+    
     const embed = new EmbedBuilder()
-      .setTitle('📊 Daily Summary (Last 24 Hours)')
+      .setTitle(title)
       .setColor(0x00AE86)
       .setTimestamp();
 
     if (playerSummaries.length === 0) {
-      embed.setDescription('No matches played in the last 24 hours by any tracked players.');
+      const noMatchesText = dateString 
+        ? `No matches played on ${dateString} by any tracked players.`
+        : 'No matches played yesterday by any tracked players.';
+      embed.setDescription(noMatchesText);
       return embed;
     }
 
@@ -474,60 +501,165 @@ export class MessageFormatter {
         ? `\n🏆 **Best Match:** ${this.getHeroName(summary.bestMatch.heroId)} (${summary.bestMatch.win ? '✅ Win' : '❌ Loss'}) - ${summary.bestMatch.kda} KDA`
         : '';
 
+      // Multi-kill stats line
+      let rampageLine = '';
+      if (summary.rampages > 0) {
+        rampageLine = `\n🔥 **${summary.rampages}** Rampage${summary.rampages > 1 ? 's' : ''}`;
+      }
+
       // Use larger, more prominent player icon and name
       // Discord embed field names are automatically bold, so we make the name stand out with spacing and emoji
       return {
         name: `🎮  ${name.toUpperCase()}`,
         value: `\n📊 **${summary.totalMatches}** matches | ${summary.wins}W-${summary.losses}L | ${winRateEmoji} **${summary.winRate}%** WR\n` +
                `⚔️ Avg KDA: **${summary.avgKDA}** | Total: ${summary.totalKills}/${summary.totalDeaths}/${summary.totalAssists}\n` +
-               `🎯 Most Played: **${mostPlayedHero}**${bestMatchInfo}`,
+               `🎯 Most Played: **${mostPlayedHero}**${rampageLine}${bestMatchInfo}`,
         inline: false
       };
     });
 
     embed.addFields(playerFields);
 
-    // Footer removed as requested
+    return embed;
+  }
+
+  /**
+   * Format rampage notification - enhanced with more details
+   */
+  formatRampageNotification(playerName, heroId, matchId, kills, deaths, assists, win, matchData = null) {
+    const heroName = this.getHeroName(heroId);
+    const kda = this.calculateKDA(kills, deaths, assists);
+    const winEmoji = win ? '✅' : '❌';
+    const winText = win ? 'VICTORY' : 'DEFEAT';
+    
+    // Dramatic messages based on performance
+    const dramaticMessages = [
+      'has unleashed DEVASTATION!',
+      'just OBLITERATED the enemy team!',
+      'went on a KILLING SPREE!',
+      'showed NO MERCY!',
+      'is UNSTOPPABLE!',
+      'has achieved PERFECTION!'
+    ];
+    const randomMessage = dramaticMessages[Math.floor(Math.random() * dramaticMessages.length)];
+
+    const embed = new EmbedBuilder()
+      .setTitle('🔥💀 R A M P A G E ! 💀🔥')
+      .setDescription(
+        `# ${playerName.toUpperCase()}\n` +
+        `### ${randomMessage}\n\n` +
+        `**5 KILLS** in rapid succession as **${heroName}**!`
+      )
+      .setColor(0xFF4500) // Orange-red for rampage
+      .setTimestamp();
+
+    // Add hero thumbnail from Dota 2 CDN
+    const heroShortName = this.getHeroShortName(heroId);
+    if (heroShortName) {
+      embed.setThumbnail(`https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/${heroShortName}.png`);
+    }
+
+    // Main stats
+    embed.addFields(
+      {
+        name: '🎮 Hero',
+        value: `**${heroName}**`,
+        inline: true
+      },
+      {
+        name: '⚔️ Final KDA',
+        value: `**${kills}/${deaths}/${assists}** (${kda})`,
+        inline: true
+      },
+      {
+        name: `${winEmoji} Result`,
+        value: `**${winText}**`,
+        inline: true
+      }
+    );
+
+    // Add extra stats if match data is available
+    if (matchData) {
+      const player = matchData.players?.find(p => p.heroId === heroId) || matchData.players?.[0];
+      
+      if (player) {
+        const extraStats = [];
+        
+        if (player.goldPerMinute) {
+          extraStats.push(`💰 GPM: **${player.goldPerMinute}**`);
+        }
+        if (player.experiencePerMinute) {
+          extraStats.push(`📈 XPM: **${player.experiencePerMinute}**`);
+        }
+        if (player.heroDamage) {
+          extraStats.push(`⚔️ Hero Damage: **${player.heroDamage.toLocaleString()}**`);
+        }
+        if (player.towerDamage) {
+          extraStats.push(`🏰 Tower Damage: **${player.towerDamage.toLocaleString()}**`);
+        }
+        
+        if (extraStats.length > 0) {
+          embed.addFields({
+            name: '📊 Performance',
+            value: extraStats.join('\n'),
+            inline: false
+          });
+        }
+      }
+      
+      // Match duration
+      if (matchData.durationSeconds) {
+        const mins = Math.floor(matchData.durationSeconds / 60);
+        const secs = matchData.durationSeconds % 60;
+        embed.addFields({
+          name: '⏱️ Match Duration',
+          value: `${mins}:${secs.toString().padStart(2, '0')}`,
+          inline: true
+        });
+      }
+    }
 
     return embed;
   }
 
   /**
-   * Format rampage notification
+   * Get hero short name for CDN URLs
    */
-  formatRampageNotification(playerName, heroId, matchId, kills, deaths, assists, win, matchUrl) {
-    const embed = new EmbedBuilder()
-      .setTitle('🔥 RAMPAGE! 🔥')
-      .setDescription(`**${playerName}** just got a RAMPAGE!`)
-      .setColor(0xFF0000) // Red for rampage
-      .setTimestamp();
-
-    const heroName = this.getHeroName(heroId);
-    const kda = this.calculateKDA(kills, deaths, assists);
-    const winEmoji = win ? '✅' : '❌';
-    const winText = win ? 'Victory' : 'Defeat';
-
-    embed.addFields(
-      {
-        name: '🎮 Hero',
-        value: heroName,
-        inline: true
-      },
-      {
-        name: '⚔️ KDA',
-        value: `${kills}/${deaths}/${assists} (${kda})`,
-        inline: true
-      },
-      {
-        name: '🏆 Result',
-        value: `${winEmoji} ${winText}`,
-        inline: true
-      }
-    );
-
-    embed.setFooter({ text: `Match ID: ${matchId}` });
-
-    return embed;
+  getHeroShortName(heroId) {
+    // Map of hero IDs to their short names used in CDN URLs
+    const heroShortNames = {
+      1: 'antimage', 2: 'axe', 3: 'bane', 4: 'bloodseeker', 5: 'crystal_maiden',
+      6: 'drow_ranger', 7: 'earthshaker', 8: 'juggernaut', 9: 'mirana', 10: 'morphling',
+      11: 'nevermore', 12: 'phantom_lancer', 13: 'puck', 14: 'pudge', 15: 'razor',
+      16: 'sand_king', 17: 'storm_spirit', 18: 'sven', 19: 'tiny', 20: 'vengefulspirit',
+      21: 'windrunner', 22: 'zuus', 23: 'kunkka', 25: 'lina', 26: 'lion',
+      27: 'shadow_shaman', 28: 'slardar', 29: 'tidehunter', 30: 'witch_doctor',
+      31: 'lich', 32: 'riki', 33: 'enigma', 34: 'tinker', 35: 'sniper',
+      36: 'necrolyte', 37: 'warlock', 38: 'beastmaster', 39: 'queenofpain', 40: 'venomancer',
+      41: 'faceless_void', 42: 'skeleton_king', 43: 'death_prophet', 44: 'phantom_assassin',
+      45: 'pugna', 46: 'templar_assassin', 47: 'viper', 48: 'luna', 49: 'dragon_knight',
+      50: 'dazzle', 51: 'rattletrap', 52: 'leshrac', 53: 'furion', 54: 'life_stealer',
+      55: 'dark_seer', 56: 'clinkz', 57: 'omniknight', 58: 'enchantress', 59: 'huskar',
+      60: 'night_stalker', 61: 'broodmother', 62: 'bounty_hunter', 63: 'weaver',
+      64: 'jakiro', 65: 'batrider', 66: 'chen', 67: 'spectre', 68: 'ancient_apparition',
+      69: 'doom_bringer', 70: 'ursa', 71: 'spirit_breaker', 72: 'gyrocopter',
+      73: 'alchemist', 74: 'invoker', 75: 'silencer', 76: 'obsidian_destroyer',
+      77: 'lycan', 78: 'brewmaster', 79: 'shadow_demon', 80: 'lone_druid',
+      81: 'chaos_knight', 82: 'meepo', 83: 'treant', 84: 'ogre_magi',
+      85: 'undying', 86: 'rubick', 87: 'disruptor', 88: 'nyx_assassin',
+      89: 'naga_siren', 90: 'keeper_of_the_light', 91: 'wisp', 92: 'visage',
+      93: 'slark', 94: 'medusa', 95: 'troll_warlord', 96: 'centaur',
+      97: 'magnataur', 98: 'shredder', 99: 'bristleback', 100: 'tusk',
+      101: 'skywrath_mage', 102: 'abaddon', 103: 'elder_titan', 104: 'legion_commander',
+      105: 'techies', 106: 'ember_spirit', 107: 'earth_spirit', 108: 'abyssal_underlord',
+      109: 'terrorblade', 110: 'phoenix', 111: 'oracle', 112: 'winter_wyvern',
+      113: 'arc_warden', 114: 'monkey_king', 119: 'dark_willow', 120: 'pangolier',
+      121: 'grimstroke', 123: 'hoodwink', 126: 'void_spirit', 128: 'snapfire',
+      129: 'mars', 131: 'ringmaster', 135: 'dawnbreaker', 136: 'marci', 137: 'primal_beast',
+      138: 'muerta', 145: 'kez'
+    };
+    
+    return heroShortNames[heroId] || null;
   }
 }
 
