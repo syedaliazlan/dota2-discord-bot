@@ -127,42 +127,39 @@ export class CommandHandler {
     const client = this.discordBot.getClient();
     const commands = Array.from(this.discordBot.getCommands().values()).map(cmd => cmd.data.toJSON());
 
+    // Helper function with timeout
+    const withTimeout = (promise, ms) => {
+      return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
+      ]);
+    };
+
     try {
-      // Register commands globally (takes up to 1 hour to propagate)
-      // For faster testing, register to a specific guild
       const guildId = process.env.DISCORD_GUILD_ID;
       
-      // ALWAYS clear global commands first to prevent duplicates when switching modes
-      try {
-        await client.application.commands.set([]);
-        logger.info('Cleared global commands');
-      } catch (clearError) {
-        logger.warn('Failed to clear global commands:', clearError.message);
-      }
-      
       if (guildId) {
-        // Register to specific guild (instant)
         const guild = client.guilds.cache.get(guildId);
         if (guild) {
-          // Clear guild commands first to prevent duplicates
-          await guild.commands.set([]);
-          await new Promise(resolve => setTimeout(resolve, 500)); // Small delay to ensure clear
-          await guild.commands.set(commands);
+          logger.info(`Registering commands to guild ${guildId}...`);
+          await withTimeout(guild.commands.set(commands), 30000);
           logger.info(`Registered ${commands.length} commands to guild ${guildId}`);
         } else {
-          logger.warn(`Guild ${guildId} not found, commands may not be available immediately`);
-          // Fallback to global registration
-          await client.application.commands.set(commands);
-          logger.info(`Registered ${commands.length} commands globally (guild not found)`);
+          logger.warn(`Guild ${guildId} not found, skipping command registration`);
+          logger.warn('Commands may already be registered from a previous run');
         }
       } else {
-        // Register globally
-        await new Promise(resolve => setTimeout(resolve, 500)); // Small delay to ensure clear
-        await client.application.commands.set(commands);
+        logger.info('Registering commands globally (this may take a while)...');
+        await withTimeout(client.application.commands.set(commands), 60000);
         logger.info(`Registered ${commands.length} commands globally`);
       }
     } catch (error) {
-      logger.error('Failed to register slash commands:', error);
+      if (error.message === 'Timeout') {
+        logger.warn('Command registration timed out - commands may already be registered');
+      } else {
+        logger.error('Failed to register slash commands:', error.message);
+      }
+      logger.info('Continuing anyway - existing commands should still work');
     }
   }
 }
