@@ -29,8 +29,8 @@ async function main() {
     const stateCache = new StateCache(config.cache.file);
     await stateCache.load();
 
-    // Initialize STRATZ client
-    const stratzClient = new StratzClient(config.stratz.apiToken);
+    // Initialize STRATZ client (with residential proxies for datacenter IP bypass)
+    const stratzClient = new StratzClient(config.stratz.apiToken, config.stratz.proxies);
     const dataProcessor = new DataProcessor(stateCache, config.steam.accountId);
     
     // Initialize friends manager

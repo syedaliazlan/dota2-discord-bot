@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -10,18 +11,29 @@ import { logger } from '../utils/logger.js';
  * - 250 calls/minute
  * - 2,000 calls/hour
  * - 10,000 calls/day
+ * 
+ * Proxy Failover:
+ * - Supports multiple residential proxies for reliability
+ * - Automatically switches to next proxy on failure (403, timeout, connection error)
+ * - Failed proxies are temporarily marked as bad and retried after cooldown
  */
 export class StratzClient {
-  constructor(apiToken) {
+  constructor(apiToken, proxies = []) {
     this.baseUrl = 'https://api.stratz.com/graphql';
     this.apiToken = apiToken;
+    
+    // Proxy configuration
+    this.proxies = Array.isArray(proxies) ? proxies : (proxies ? [proxies] : []);
+    this.currentProxyIndex = 0;
+    this.badProxies = new Map(); // Map<proxyUrl, timestamp when marked bad>
+    this.proxyCooldown = 5 * 60 * 1000; // 5 minutes before retrying a bad proxy
     
     // Rate limiting: 20 req/sec = 50ms between requests (being conservative)
     this.rateLimitDelay = 50;
     this.lastRequestTime = 0;
 
-    // Create axios instance with default config
-    this.client = axios.create({
+    // Base axios config (without proxy - added per-request)
+    this.baseAxiosConfig = {
       baseURL: this.baseUrl,
       timeout: 15000,
       headers: {
@@ -29,7 +41,95 @@ export class StratzClient {
         'Authorization': `Bearer ${apiToken}`,
         'User-Agent': 'Dota2DiscordBot/1.0'
       }
-    });
+    };
+
+    if (this.proxies.length > 0) {
+      logger.info(`STRATZ client configured with ${this.proxies.length} residential proxies (failover enabled)`);
+    } else {
+      logger.warn('STRATZ client running without proxy - may be blocked on datacenter IPs');
+    }
+  }
+
+  /**
+   * Get the next available proxy URL, skipping bad ones
+   * Returns null if no proxies available
+   */
+  getNextProxy() {
+    if (this.proxies.length === 0) return null;
+
+    const now = Date.now();
+    let attempts = 0;
+    
+    while (attempts < this.proxies.length) {
+      const proxyUrl = this.proxies[this.currentProxyIndex];
+      const badSince = this.badProxies.get(proxyUrl);
+      
+      // Check if proxy was marked bad but cooldown has passed
+      if (badSince && (now - badSince) > this.proxyCooldown) {
+        this.badProxies.delete(proxyUrl);
+        logger.debug(`Proxy ${this.currentProxyIndex + 1} cooldown expired, retrying`);
+      }
+      
+      // If proxy is not bad, use it
+      if (!this.badProxies.has(proxyUrl)) {
+        return proxyUrl;
+      }
+      
+      // Move to next proxy
+      this.currentProxyIndex = (this.currentProxyIndex + 1) % this.proxies.length;
+      attempts++;
+    }
+    
+    // All proxies are bad, clear the oldest one and use it
+    logger.warn('All proxies marked as bad, clearing oldest and retrying');
+    let oldestProxy = null;
+    let oldestTime = Infinity;
+    for (const [proxy, time] of this.badProxies) {
+      if (time < oldestTime) {
+        oldestTime = time;
+        oldestProxy = proxy;
+      }
+    }
+    if (oldestProxy) {
+      this.badProxies.delete(oldestProxy);
+      return oldestProxy;
+    }
+    
+    return this.proxies[0];
+  }
+
+  /**
+   * Mark current proxy as bad and switch to next
+   */
+  markCurrentProxyBad() {
+    if (this.proxies.length === 0) return;
+    
+    const badProxy = this.proxies[this.currentProxyIndex];
+    this.badProxies.set(badProxy, Date.now());
+    
+    const oldIndex = this.currentProxyIndex;
+    this.currentProxyIndex = (this.currentProxyIndex + 1) % this.proxies.length;
+    
+    // Mask password in logs
+    const maskedProxy = badProxy.replace(/:[^:@]+@/, ':***@');
+    logger.warn(`Proxy ${oldIndex + 1} marked as bad (${maskedProxy}), switching to proxy ${this.currentProxyIndex + 1}`);
+  }
+
+  /**
+   * Create axios config with current proxy
+   */
+  createAxiosConfig() {
+    const config = { ...this.baseAxiosConfig };
+    
+    const proxyUrl = this.getNextProxy();
+    if (proxyUrl) {
+      const proxyAgent = new HttpsProxyAgent(proxyUrl);
+      config.httpsAgent = proxyAgent;
+      config.httpAgent = proxyAgent;
+      config.proxy = false;
+    }
+    
+    return config;
   }
 
   /**
@@ -48,21 +148,59 @@ export class StratzClient {
   }
 
   /**
-   * Execute GraphQL query
+   * Check if an error is proxy-related and should trigger failover
+   */
+  isProxyError(error) {
+    // 403 Forbidden - Cloudflare blocking
+    if (error.response?.status === 403) return true;
+    
+    // Connection errors
+    if (error.code === 'ECONNREFUSED') return true;
+    if (error.code === 'ECONNRESET') return true;
+    if (error.code === 'ENOTFOUND') return true;
+    if (error.code === 'ETIMEDOUT') return true;
+    
+    // Proxy-specific errors
+    if (error.message?.includes('proxy')) return true;
+    if (error.message?.includes('socket hang up')) return true;
+    
+    return false;
+  }
+
+  /**
+   * Execute GraphQL query with proxy failover
    */
   async query(queryString, variables = {}, retries = 3) {
     await this.waitForRateLimit();
 
     const startTime = Date.now();
+    let proxyAttempts = 0;
+    const maxProxyAttempts = Math.min(this.proxies.length, 5); // Try up to 5 different proxies
     
     for (let i = 0; i < retries; i++) {
       try {
-        const response = await this.client.post('', {
+        // Create axios instance with current proxy config
+        const axiosConfig = this.createAxiosConfig();
+        const client = axios.create(axiosConfig);
+        
+        const response = await client.post('', {
           query: queryString,
           variables
         });
 
         const duration = Date.now() - startTime;
+        
+        // Check if response is HTML (Cloudflare block page) instead of JSON
+        if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+          logger.warn('Received HTML instead of JSON - likely Cloudflare block');
+          if (this.proxies.length > 0 && proxyAttempts < maxProxyAttempts) {
+            this.markCurrentProxyBad();
+            proxyAttempts++;
+            i--; // Don't count this as a regular retry
+            continue;
+          }
+          throw new Error('STRATZ returned Cloudflare block page');
+        }
         
         if (response.data.errors) {
           const errorMessages = response.data.errors.map(e => e.message).join(', ');
@@ -72,6 +210,15 @@ export class StratzClient {
         logger.debug(`STRATZ query completed (${duration}ms)`);
         return response.data.data;
       } catch (error) {
+        // Check if this is a proxy-related error
+        if (this.isProxyError(error) && this.proxies.length > 0 && proxyAttempts < maxProxyAttempts) {
+          logger.warn(`Proxy error detected: ${error.message}`);
+          this.markCurrentProxyBad();
+          proxyAttempts++;
+          i--; // Don't count proxy failover as a regular retry
+          continue;
+        }
+        
         if (error.response) {
           if (error.response.status === 429) {
             logger.warn('Rate limited by STRATZ, waiting...');

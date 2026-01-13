@@ -58,6 +58,25 @@ export function loadConfig() {
   const weekdayTime = parseTime(process.env.DAILY_SUMMARY_WEEKDAY_TIME, 3, 0);
   const weekendTime = parseTime(process.env.DAILY_SUMMARY_WEEKEND_TIME, 22, 0);
 
+  // Parse STRATZ proxies list (format: ip:port:username:password, comma-separated)
+  const parseProxies = (proxiesStr) => {
+    if (!proxiesStr) return [];
+    return proxiesStr.split(',').map(proxy => {
+      const parts = proxy.trim().split(':');
+      if (parts.length === 4) {
+        const [ip, port, username, password] = parts;
+        return `http://${username}:${password}@${ip}:${port}`;
+      }
+      // If already in URL format, return as-is
+      if (proxy.startsWith('http://') || proxy.startsWith('https://')) {
+        return proxy.trim();
+      }
+      return null;
+    }).filter(Boolean);
+  };
+
+  const proxyList = parseProxies(process.env.STRATZ_PROXIES);
+
   const config = {
     discord: {
       token: process.env.DISCORD_BOT_TOKEN,
@@ -67,7 +86,8 @@ export function loadConfig() {
       accountId: process.env.STEAM_ACCOUNT_ID
     },
     stratz: {
-      apiToken: process.env.STRATZ_API_TOKEN || null
+      apiToken: process.env.STRATZ_API_TOKEN || null,
+      proxies: proxyList
     },
     polling: {
       interval: parseInt(process.env.POLLING_INTERVAL || '5', 10) // minutes
@@ -85,6 +105,9 @@ export function loadConfig() {
 
   logger.info('Configuration loaded successfully');
   logger.info(`Loaded ${Object.keys(friendsList).length} friends from configuration`);
+  if (proxyList.length > 0) {
+    logger.info(`Loaded ${proxyList.length} STRATZ proxies for failover`);
+  }
   
   // Log logging configuration
   const logLevel = process.env.LOG_LEVEL || 'INFO';
