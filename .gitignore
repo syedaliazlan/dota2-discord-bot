@@ -17,6 +17,7 @@ Thumbs.db
 # IDE files
 .vscode/
 .idea/
+.cursorignore
 *.swp
 *.swo
 
