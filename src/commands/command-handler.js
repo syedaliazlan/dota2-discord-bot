@@ -11,6 +11,7 @@ import { searchCommand } from './search.js';
 import { listfriendsCommand } from './listfriends.js';
 import { dailyallCommand } from './dailyall.js';
 import { rampageCommand } from './rampage.js';
+import { metaCommand } from './meta.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -47,6 +48,7 @@ export class CommandHandler {
     this.discordBot.registerCommand(listfriendsCommand);
     this.discordBot.registerCommand(dailyallCommand);
     this.discordBot.registerCommand(rampageCommand);
+    this.discordBot.registerCommand(metaCommand);
 
     logger.info(`Registered ${this.discordBot.getCommands().size} commands`);
   }
@@ -93,6 +95,8 @@ export class CommandHandler {
           await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.friendsManager);
         } else if (interaction.commandName === 'rampage') {
           await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.friendsManager, this.heroMap);
+        } else if (interaction.commandName === 'meta') {
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter);
         }
       } catch (error) {
         logger.error(`Error executing command ${interaction.commandName}:`, error);

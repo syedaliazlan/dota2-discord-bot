@@ -10,13 +10,16 @@ export class StateCache {
     this.cacheFile = cacheFile;
     this.cache = {
       lastMatchId: null,
+      lastMatchIdByPlayer: {}, // Track last match ID per player account
       lastChecked: null,
       playerStats: null,
       achievements: null,
       lastLiveMatchId: null,
       lastDailySummary: null,
       dailyMatches: [],
-      detectedRampages: [] // Track detected rampages to avoid duplicates
+      detectedRampages: [], // Track detected rampages to avoid duplicates (legacy)
+      detectedMultiKills: [], // Track detected multi-kills (rampages, ultra kills, triple kills)
+      playerRanks: {} // Track player ranks for rank change notifications
     };
   }
 
@@ -67,6 +70,26 @@ export class StateCache {
    */
   setLastMatchId(matchId) {
     this.cache.lastMatchId = matchId;
+  }
+
+  /**
+   * Get last known match ID for a specific player account
+   */
+  getLastMatchIdForPlayer(accountId) {
+    if (!this.cache.lastMatchIdByPlayer) {
+      this.cache.lastMatchIdByPlayer = {};
+    }
+    return this.cache.lastMatchIdByPlayer[accountId] || null;
+  }
+
+  /**
+   * Update last match ID for a specific player account
+   */
+  setLastMatchIdForPlayer(accountId, matchId) {
+    if (!this.cache.lastMatchIdByPlayer) {
+      this.cache.lastMatchIdByPlayer = {};
+    }
+    this.cache.lastMatchIdByPlayer[accountId] = matchId;
   }
 
   /**
@@ -213,6 +236,81 @@ export class StateCache {
     if (this.cache.detectedRampages.length > 100) {
       this.cache.detectedRampages = this.cache.detectedRampages.slice(-100);
     }
+  }
+
+  /**
+   * Check if multi-kill was already detected for a match
+   */
+  isMultiKillDetected(matchId, accountId) {
+    if (!this.cache.detectedMultiKills) {
+      this.cache.detectedMultiKills = [];
+    }
+    return this.cache.detectedMultiKills.some(
+      m => m.matchId === matchId && m.accountId === accountId
+    );
+  }
+
+  /**
+   * Mark multi-kill as detected for a match
+   */
+  markMultiKillDetected(matchId, accountId, playerName) {
+    if (!this.cache.detectedMultiKills) {
+      this.cache.detectedMultiKills = [];
+    }
+    this.cache.detectedMultiKills.push({
+      matchId,
+      accountId,
+      playerName,
+      detectedAt: new Date().toISOString()
+    });
+    
+    // Keep only last 200 entries to prevent cache from growing too large
+    if (this.cache.detectedMultiKills.length > 200) {
+      this.cache.detectedMultiKills = this.cache.detectedMultiKills.slice(-200);
+    }
+  }
+
+  /**
+   * Get stored rank for a player
+   */
+  getPlayerRank(accountId) {
+    if (!this.cache.playerRanks) {
+      this.cache.playerRanks = {};
+    }
+    return this.cache.playerRanks[accountId] || null;
+  }
+
+  /**
+   * Update stored rank for a player
+   * Returns the old rank if it changed, null otherwise
+   */
+  updatePlayerRank(accountId, newRank, newLeaderboardRank = null) {
+    if (!this.cache.playerRanks) {
+      this.cache.playerRanks = {};
+    }
+    
+    const oldRankData = this.cache.playerRanks[accountId];
+    const oldRank = oldRankData?.rank || null;
+    const oldLeaderboardRank = oldRankData?.leaderboardRank || null;
+    
+    // Update the stored rank
+    this.cache.playerRanks[accountId] = {
+      rank: newRank,
+      leaderboardRank: newLeaderboardRank,
+      updatedAt: new Date().toISOString()
+    };
+    
+    // Return old data if rank changed
+    if (oldRank !== null && oldRank !== newRank) {
+      return { oldRank, oldLeaderboardRank };
+    }
+    
+    // Check if leaderboard rank changed significantly
+    if (oldLeaderboardRank !== null && newLeaderboardRank !== null && oldLeaderboardRank !== newLeaderboardRank) {
+      return { oldRank, oldLeaderboardRank };
+    }
+    
+    return null;
   }
 }
 

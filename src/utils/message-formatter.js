@@ -623,6 +623,226 @@ export class MessageFormatter {
   }
 
   /**
+   * Format ultra kill notification
+   */
+  formatUltraKillNotification(playerName, heroId, matchId, kills, deaths, assists, win, count = 1, matchData = null) {
+    const heroName = this.getHeroName(heroId);
+    const kda = this.calculateKDA(kills, deaths, assists);
+    const winEmoji = win ? '✅' : '❌';
+    const winText = win ? 'VICTORY' : 'DEFEAT';
+    
+    const dramaticMessages = [
+      'is on FIRE!',
+      'is DOMINATING!',
+      'cannot be stopped!',
+      'is CRUSHING it!'
+    ];
+    const randomMessage = dramaticMessages[Math.floor(Math.random() * dramaticMessages.length)];
+
+    const countText = count > 1 ? ` (x${count})` : '';
+    
+    const embed = new EmbedBuilder()
+      .setTitle(`⚡💀 U L T R A  K I L L ! 💀⚡${countText}`)
+      .setDescription(
+        `## ${playerName.toUpperCase()}\n` +
+        `### ${randomMessage}\n\n` +
+        `**4 KILLS** in rapid succession as **${heroName}**!`
+      )
+      .setColor(0x9932CC) // Purple for ultra kill
+      .setTimestamp();
+
+    const heroShortName = this.getHeroShortName(heroId);
+    if (heroShortName) {
+      embed.setThumbnail(`https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/${heroShortName}.png`);
+    }
+
+    embed.addFields(
+      { name: '🎮 Hero', value: `**${heroName}**`, inline: true },
+      { name: '⚔️ Final KDA', value: `**${kills}/${deaths}/${assists}** (${kda})`, inline: true },
+      { name: `${winEmoji} Result`, value: `**${winText}**`, inline: true }
+    );
+
+    if (matchData?.durationSeconds) {
+      const mins = Math.floor(matchData.durationSeconds / 60);
+      const secs = matchData.durationSeconds % 60;
+      embed.addFields({
+        name: '⏱️ Duration',
+        value: `${mins}:${secs.toString().padStart(2, '0')}`,
+        inline: true
+      });
+    }
+
+    return embed;
+  }
+
+  /**
+   * Format triple kill notification
+   */
+  formatTripleKillNotification(playerName, heroId, matchId, kills, deaths, assists, win, count = 1, matchData = null) {
+    const heroName = this.getHeroName(heroId);
+    const kda = this.calculateKDA(kills, deaths, assists);
+    const winEmoji = win ? '✅' : '❌';
+    const winText = win ? 'VICTORY' : 'DEFEAT';
+    
+    const dramaticMessages = [
+      'got a clean sweep!',
+      'is picking them off!',
+      'scored a hat trick!'
+    ];
+    const randomMessage = dramaticMessages[Math.floor(Math.random() * dramaticMessages.length)];
+
+    const countText = count > 1 ? ` (x${count})` : '';
+    
+    const embed = new EmbedBuilder()
+      .setTitle(`💥 T R I P L E  K I L L ! 💥${countText}`)
+      .setDescription(
+        `## ${playerName.toUpperCase()}\n` +
+        `### ${randomMessage}\n\n` +
+        `**3 KILLS** in rapid succession as **${heroName}**!`
+      )
+      .setColor(0x00BFFF) // Deep sky blue for triple kill
+      .setTimestamp();
+
+    const heroShortName = this.getHeroShortName(heroId);
+    if (heroShortName) {
+      embed.setThumbnail(`https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/${heroShortName}.png`);
+    }
+
+    embed.addFields(
+      { name: '🎮 Hero', value: `**${heroName}**`, inline: true },
+      { name: '⚔️ Final KDA', value: `**${kills}/${deaths}/${assists}** (${kda})`, inline: true },
+      { name: `${winEmoji} Result`, value: `**${winText}**`, inline: true }
+    );
+
+    if (matchData?.durationSeconds) {
+      const mins = Math.floor(matchData.durationSeconds / 60);
+      const secs = matchData.durationSeconds % 60;
+      embed.addFields({
+        name: '⏱️ Duration',
+        value: `${mins}:${secs.toString().padStart(2, '0')}`,
+        inline: true
+      });
+    }
+
+    return embed;
+  }
+
+  /**
+   * Format rank change notification
+   */
+  formatRankChangeNotification(playerName, oldRank, newRank, oldLeaderboardRank = null, newLeaderboardRank = null) {
+    const isRankUp = newRank > oldRank;
+    const oldRankText = this.getRankText(oldRank);
+    const newRankText = this.getRankText(newRank);
+    
+    const embed = new EmbedBuilder()
+      .setTimestamp();
+
+    if (isRankUp) {
+      embed
+        .setTitle('🎉📈 R A N K  U P ! 📈🎉')
+        .setDescription(
+          `# ${playerName.toUpperCase()}\n` +
+          `### has ranked up!\n\n` +
+          `**${oldRankText}** → **${newRankText}**`
+        )
+        .setColor(0x00FF00); // Green for rank up
+    } else {
+      embed
+        .setTitle('📉 Rank Changed 📉')
+        .setDescription(
+          `## ${playerName.toUpperCase()}\n\n` +
+          `**${oldRankText}** → **${newRankText}**`
+        )
+        .setColor(0xFF6347); // Tomato red for rank down
+    }
+
+    // Add leaderboard info if applicable
+    if (newLeaderboardRank) {
+      let leaderboardText = `**#${newLeaderboardRank}** on leaderboard`;
+      if (oldLeaderboardRank && oldLeaderboardRank !== newLeaderboardRank) {
+        const diff = oldLeaderboardRank - newLeaderboardRank;
+        if (diff > 0) {
+          leaderboardText += ` ↑${diff}`;
+        } else {
+          leaderboardText += ` ↓${Math.abs(diff)}`;
+        }
+      }
+      embed.addFields({
+        name: '🏆 Leaderboard',
+        value: leaderboardText,
+        inline: false
+      });
+    }
+
+    return embed;
+  }
+
+  /**
+   * Format hero meta statistics embed
+   */
+  formatHeroMeta(heroStats, rankBracket = 'all') {
+    const bracketNames = {
+      'all': 'All Ranks',
+      'herald_guardian': 'Herald/Guardian',
+      'crusader_archon': 'Crusader/Archon',
+      'legend_ancient': 'Legend/Ancient',
+      'divine_immortal': 'Divine/Immortal'
+    };
+    
+    const bracketName = bracketNames[rankBracket] || 'All Ranks';
+    
+    const embed = new EmbedBuilder()
+      .setTitle(`📊 Hero Meta - ${bracketName}`)
+      .setColor(0x00AE86)
+      .setTimestamp();
+
+    if (!heroStats || heroStats.length === 0) {
+      embed.setDescription('No hero statistics available.');
+      return embed;
+    }
+
+    // Top 10 heroes by win rate (with minimum games)
+    const topWinRate = [...heroStats]
+      .filter(h => h.matchCount >= 100) // Minimum games threshold
+      .sort((a, b) => b.winRate - a.winRate)
+      .slice(0, 10);
+
+    // Top 10 most picked heroes
+    const topPicked = [...heroStats]
+      .sort((a, b) => b.matchCount - a.matchCount)
+      .slice(0, 10);
+
+    if (topWinRate.length > 0) {
+      const winRateList = topWinRate.map((hero, i) => {
+        const winRateEmoji = hero.winRate >= 55 ? '🔥' : hero.winRate >= 52 ? '✅' : '⚠️';
+        return `${i + 1}. **${hero.heroName}** - ${winRateEmoji} ${hero.winRate.toFixed(1)}% (${hero.matchCount.toLocaleString()} games)`;
+      }).join('\n');
+
+      embed.addFields({
+        name: '🏆 Highest Win Rate',
+        value: winRateList,
+        inline: false
+      });
+    }
+
+    if (topPicked.length > 0) {
+      const pickedList = topPicked.map((hero, i) => {
+        const winRateEmoji = hero.winRate >= 55 ? '🔥' : hero.winRate >= 52 ? '✅' : '⚠️';
+        return `${i + 1}. **${hero.heroName}** - ${hero.matchCount.toLocaleString()} games (${winRateEmoji} ${hero.winRate.toFixed(1)}%)`;
+      }).join('\n');
+
+      embed.addFields({
+        name: '📈 Most Picked',
+        value: pickedList,
+        inline: false
+      });
+    }
+
+    return embed;
+  }
+
+  /**
    * Get hero short name for CDN URLs
    */
   getHeroShortName(heroId) {

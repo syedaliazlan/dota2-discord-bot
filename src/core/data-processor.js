@@ -230,16 +230,26 @@ export class DataProcessor {
 
   /**
    * Detect new matches by comparing with cache
+   * @param {Array} matches - Processed matches
+   * @param {string} accountId - Optional account ID for per-player tracking
    */
-  detectNewMatches(matches) {
+  detectNewMatches(matches, accountId = null) {
     if (!matches || !Array.isArray(matches) || matches.length === 0) {
       return [];
     }
 
-    const lastMatchId = this.stateCache.getLastMatchId();
+    // Use per-player tracking if accountId provided, otherwise fall back to global
+    const lastMatchId = accountId 
+      ? this.stateCache.getLastMatchIdForPlayer(accountId)
+      : this.stateCache.getLastMatchId();
+    
     if (!lastMatchId) {
       // First run, cache the latest match
-      this.stateCache.setLastMatchId(matches[0].matchId);
+      if (accountId) {
+        this.stateCache.setLastMatchIdForPlayer(accountId, matches[0].matchId);
+      } else {
+        this.stateCache.setLastMatchId(matches[0].matchId);
+      }
       return [];
     }
 
@@ -248,7 +258,11 @@ export class DataProcessor {
     
     if (newMatches.length > 0) {
       // Update cache with latest match ID
-      this.stateCache.setLastMatchId(newMatches[0].matchId);
+      if (accountId) {
+        this.stateCache.setLastMatchIdForPlayer(accountId, newMatches[0].matchId);
+      } else {
+        this.stateCache.setLastMatchId(newMatches[0].matchId);
+      }
     }
 
     return newMatches;
