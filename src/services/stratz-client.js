@@ -633,20 +633,28 @@ export class StratzClient {
 
   /**
    * Get hero meta statistics (win rates, pick rates)
-   * @param {string} bracket - Rank bracket: HERALD_GUARDIAN, CRUSADER_ARCHON, LEGEND_ANCIENT, DIVINE_IMMORTAL, or null for all
-   * @param {number} gameModeId - Game mode ID (1 = All Pick, 22 = Ranked All Pick)
+   * @param {string} bracket - Rank bracket: herald_guardian, crusader_archon, legend_ancient, divine_immortal, or null for all
    */
-  async getHeroMetaStats(bracket = null, gameModeId = null) {
+  async getHeroMetaStats(bracket = null) {
     logger.debug(`Fetching hero meta stats for bracket: ${bracket || 'all'}`);
     
-    // Use heroStats query for win rate data
+    // Map bracket name to API enum
+    const bracketMap = {
+      'herald_guardian': 'HERALD_GUARDIAN',
+      'crusader_archon': 'CRUSADER_ARCHON', 
+      'legend_ancient': 'LEGEND_ANCIENT',
+      'divine_immortal': 'DIVINE_IMMORTAL'
+    };
+
+    const bracketBasic = bracket ? bracketMap[bracket] : null;
+    
+    // Use heroStats winDay query which is more reliable
     const query = `
-      query GetHeroMetaStats($bracketIds: [RankBracket], $gameModeIds: [Int]) {
+      query GetHeroMetaStats${bracketBasic ? '($bracket: RankBracketBasicEnum)' : ''} {
         heroStats {
-          winWeek(
+          winDay(
             take: 150
-            bracketIds: $bracketIds
-            gameModeIds: $gameModeIds
+            ${bracketBasic ? 'bracketBasicIds: [$bracket]' : ''}
           ) {
             heroId
             matchCount
@@ -656,32 +664,74 @@ export class StratzClient {
       }
     `;
 
-    // Map bracket name to API enum
-    const bracketMap = {
-      'herald_guardian': ['HERALD_GUARDIAN'],
-      'crusader_archon': ['CRUSADER_ARCHON'],
-      'legend_ancient': ['LEGEND_ANCIENT'],
-      'divine_immortal': ['DIVINE_IMMORTAL']
-    };
-
-    const bracketIds = bracket ? bracketMap[bracket] : null;
-    const gameModeIds = gameModeId ? [gameModeId] : null;
-
-    const data = await this.query(query, { bracketIds, gameModeIds });
-    const weekStats = data?.heroStats?.winWeek || [];
+    const variables = bracketBasic ? { bracket: bracketBasic } : {};
     
-    // Get hero names to enrich the data
-    const heroes = await this.getHeroes();
-    const heroMap = new Map(heroes.map(h => [h.id, h.displayName || h.name]));
+    try {
+      const data = await this.query(query, variables);
+      const dayStats = data?.heroStats?.winDay || [];
+      
+      if (dayStats.length === 0) {
+        logger.warn('No hero stats returned from winDay query, trying winWeek...');
+        // Fallback to winWeek
+        return await this.getHeroMetaStatsFallback(bracket);
+      }
+      
+      // Get hero names to enrich the data
+      const heroes = await this.getHeroes();
+      const heroMap = new Map(heroes.map(h => [h.id, h.displayName || h.name]));
+      
+      // Process and calculate win rates
+      return dayStats.map(stat => ({
+        heroId: stat.heroId,
+        heroName: heroMap.get(stat.heroId) || `Hero ${stat.heroId}`,
+        matchCount: stat.matchCount,
+        winCount: stat.winCount,
+        winRate: stat.matchCount > 0 ? (stat.winCount / stat.matchCount) * 100 : 0
+      }));
+    } catch (error) {
+      logger.warn(`Hero meta stats query failed: ${error.message}, trying fallback...`);
+      return await this.getHeroMetaStatsFallback(bracket);
+    }
+  }
+
+  /**
+   * Fallback method for hero meta stats using a simpler query
+   */
+  async getHeroMetaStatsFallback(bracket = null) {
+    logger.debug('Using fallback hero meta stats query');
     
-    // Process and calculate win rates
-    return weekStats.map(stat => ({
-      heroId: stat.heroId,
-      heroName: heroMap.get(stat.heroId) || `Hero ${stat.heroId}`,
-      matchCount: stat.matchCount,
-      winCount: stat.winCount,
-      winRate: stat.matchCount > 0 ? (stat.winCount / stat.matchCount) * 100 : 0
-    }));
+    // Simple query without bracket filtering
+    const query = `
+      query GetHeroStats {
+        heroStats {
+          stats(bracketBasicIds: null) {
+            heroId
+            matchCount
+            winCount
+          }
+        }
+      }
+    `;
+    
+    try {
+      const data = await this.query(query, {});
+      const stats = data?.heroStats?.stats || [];
+      
+      // Get hero names
+      const heroes = await this.getHeroes();
+      const heroMap = new Map(heroes.map(h => [h.id, h.displayName || h.name]));
+      
+      return stats.map(stat => ({
+        heroId: stat.heroId,
+        heroName: heroMap.get(stat.heroId) || `Hero ${stat.heroId}`,
+        matchCount: stat.matchCount || 0,
+        winCount: stat.winCount || 0,
+        winRate: stat.matchCount > 0 ? (stat.winCount / stat.matchCount) * 100 : 0
+      }));
+    } catch (error) {
+      logger.error(`Fallback hero meta stats also failed: ${error.message}`);
+      return [];
+    }
   }
 
   /**
