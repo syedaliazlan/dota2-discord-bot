@@ -7,30 +7,16 @@ import { logger } from '../utils/logger.js';
 export const metaCommand = {
   data: new SlashCommandBuilder()
     .setName('meta')
-    .setDescription('Show current hero meta - win rates and pick rates')
-    .addStringOption(option =>
-      option.setName('bracket')
-        .setDescription('Filter by rank bracket')
-        .setRequired(false)
-        .addChoices(
-          { name: 'All Ranks', value: 'all' },
-          { name: 'Herald/Guardian', value: 'herald_guardian' },
-          { name: 'Crusader/Archon', value: 'crusader_archon' },
-          { name: 'Legend/Ancient', value: 'legend_ancient' },
-          { name: 'Divine/Immortal', value: 'divine_immortal' }
-        )),
+    .setDescription('Show current hero meta - win rates and pick rates (past week, all ranks)'),
 
   async execute(interaction, stratzClient, dataProcessor, messageFormatter) {
     await interaction.deferReply();
 
     try {
-      const bracket = interaction.options.getString('bracket') || 'all';
-      
-      logger.info(`Fetching hero meta stats for bracket: ${bracket}`);
+      logger.info('Fetching hero meta stats');
       
       // Fetch hero meta stats from STRATZ
-      const bracketParam = bracket === 'all' ? null : bracket;
-      const heroStats = await stratzClient.getHeroMetaStats(bracketParam);
+      const heroStats = await stratzClient.getHeroMetaStats();
 
       if (!heroStats || heroStats.length === 0) {
         await interaction.editReply('No hero statistics available at this time.');
@@ -38,7 +24,7 @@ export const metaCommand = {
       }
 
       // Format and send the embed
-      const embed = messageFormatter.formatHeroMeta(heroStats, bracket);
+      const embed = messageFormatter.formatHeroMeta(heroStats, 'all');
       await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
