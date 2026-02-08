@@ -650,11 +650,11 @@ export class StratzClient {
     
     // Use heroStats winDay query which is more reliable
     const query = `
-      query GetHeroMetaStats${bracketBasic ? '($bracket: RankBracketBasicEnum)' : ''} {
+      query GetHeroMetaStats${bracketBasic ? '($bracket: RankBracket)' : ''} {
         heroStats {
           winDay(
             take: 150
-            ${bracketBasic ? 'bracketBasicIds: [$bracket]' : ''}
+            ${bracketBasic ? 'bracketIds: [$bracket]' : ''}
           ) {
             heroId
             matchCount
@@ -700,11 +700,11 @@ export class StratzClient {
   async getHeroMetaStatsFallback(bracket = null) {
     logger.debug('Using fallback hero meta stats query');
     
-    // Simple query without bracket filtering
+    // Simple query without bracket filtering - use winWeek instead
     const query = `
       query GetHeroStats {
         heroStats {
-          stats(bracketBasicIds: null) {
+          winWeek(take: 150) {
             heroId
             matchCount
             winCount
@@ -715,7 +715,7 @@ export class StratzClient {
     
     try {
       const data = await this.query(query, {});
-      const stats = data?.heroStats?.stats || [];
+      const stats = data?.heroStats?.winWeek || [];
       
       // Get hero names
       const heroes = await this.getHeroes();
