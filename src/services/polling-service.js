@@ -4,6 +4,12 @@ import { logger } from '../utils/logger.js';
 /**
  * Polling service to check for updates at regular intervals
  * Uses STRATZ API for all data
+ *
+ * Checks all tracked players (main + friends) for:
+ * - New matches
+ * - Multi-kills (triple, ultra, rampage) via STRATZ feats API
+ * - Rank changes via seasonRank
+ * - Live matches
  */
 export class PollingService {
   constructor(stratzClient, dataProcessor, stateCache, discordBot, messageFormatter, accountId, intervalMinutes, friendsManager = null, dailySummaryConfig = null) {
@@ -35,7 +41,7 @@ export class PollingService {
 
     // Convert minutes to cron expression (every X minutes)
     const cronExpression = `*/${this.intervalMinutes} * * * *`;
-    
+
     this.cronJob = cron.schedule(cronExpression, async () => {
       await this.checkForUpdates();
     }, {
@@ -45,7 +51,7 @@ export class PollingService {
 
     this.isRunning = true;
     logger.info(`Polling service started (checking every ${this.intervalMinutes} minutes)`);
-    
+
     // Skip immediate poll - let the cron job handle it to avoid overwhelming API on startup
     logger.info('Skipping initial poll - first check will run in ' + this.intervalMinutes + ' minutes');
 
@@ -55,7 +61,7 @@ export class PollingService {
     const weekdayMinute = this.dailySummaryConfig.weekdayTime.minute;
     const weekendHour = this.dailySummaryConfig.weekendTime.hour;
     const weekendMinute = this.dailySummaryConfig.weekendTime.minute;
-    
+
     // Weekdays: Monday-Friday
     cron.schedule(`${weekdayMinute} ${weekdayHour} * * 1-5`, async () => {
       await this.sendDailySummary();
@@ -63,7 +69,7 @@ export class PollingService {
       scheduled: true,
       timezone: 'Europe/London'
     });
-    
+
     // Weekends: Saturday-Sunday
     cron.schedule(`${weekendMinute} ${weekendHour} * * 0,6`, async () => {
       await this.sendDailySummary();
@@ -71,7 +77,7 @@ export class PollingService {
       scheduled: true,
       timezone: 'Europe/London'
     });
-    
+
     logger.info(`Daily summary scheduled: ${weekdayHour.toString().padStart(2, '0')}:${weekdayMinute.toString().padStart(2, '0')} UK time (Mon-Fri), ${weekendHour.toString().padStart(2, '0')}:${weekendMinute.toString().padStart(2, '0')} UK time (Sat-Sun)`);
   }
 
@@ -92,17 +98,41 @@ export class PollingService {
   }
 
   /**
-   * Check for updates (new matches, stat changes, etc.)
+   * Get all players to check (main account + friends)
+   */
+  getAllPlayers() {
+    if (this.friendsManager) {
+      return this.friendsManager.getAllFriends();
+    }
+    return [{ name: 'You', ids: [this.accountId] }];
+  }
+
+  /**
+   * Check for updates (new matches, stat changes, etc.) for ALL tracked players
    */
   async checkForUpdates() {
     try {
-      // Check for new matches
-      await this.checkNewMatches();
+      const players = this.getAllPlayers();
 
-      // Check for stat changes
-      await this.checkStatChanges();
+      for (const player of players) {
+        const accountId = player.ids[0]; // Use primary account ID
+        const playerName = player.name;
 
-      // Check for live matches
+        try {
+          // Check for new matches for this player
+          await this.checkNewMatchesForPlayer(accountId, playerName);
+
+          // Small delay between players to respect rate limits
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } catch (error) {
+          logger.error(`Error checking updates for ${playerName}:`, error.message);
+        }
+      }
+
+      // Check rank changes for main account
+      await this.checkRankChanges();
+
+      // Check for live matches (main account only - STRATZ live search is expensive)
       await this.checkLiveMatches();
 
       // Save cache after checks
@@ -113,120 +143,294 @@ export class PollingService {
   }
 
   /**
-   * Check for new matches using STRATZ API
+   * Check for new matches for a specific player using STRATZ API
    */
-  async checkNewMatches() {
+  async checkNewMatchesForPlayer(accountId, playerName) {
     try {
       // Get recent matches from STRATZ
-      const matchesData = await this.stratzClient.getRecentMatches(this.accountId, 10);
-      
+      const matchesData = await this.stratzClient.getRecentMatches(accountId, 10);
+
       if (!matchesData || matchesData.length === 0) {
         return;
       }
 
       const processed = this.dataProcessor.processRecentMatches(matchesData);
-      const newMatches = this.dataProcessor.detectNewMatches(processed);
+      const cacheKey = `lastMatchId_${accountId}`;
+      const lastMatchId = this.stateCache.get(cacheKey) || (accountId === this.accountId ? this.stateCache.getLastMatchId() : null);
+
+      // Find new matches
+      let newMatches;
+      if (!lastMatchId) {
+        // First run for this player, cache the latest match
+        if (processed.length > 0) {
+          this.stateCache.set(cacheKey, processed[0].matchId);
+          if (accountId === this.accountId) {
+            this.stateCache.setLastMatchId(processed[0].matchId);
+          }
+        }
+        return;
+      }
+
+      newMatches = processed.filter(match => match.matchId > lastMatchId);
 
       if (newMatches.length > 0) {
-        logger.info(`Found ${newMatches.length} new match(es)`);
-        
-        // Send notification for each new match (most recent first)
+        // Update cache with latest match ID
+        this.stateCache.set(cacheKey, newMatches[0].matchId);
+        if (accountId === this.accountId) {
+          this.stateCache.setLastMatchId(newMatches[0].matchId);
+        }
+
+        logger.info(`Found ${newMatches.length} new match(es) for ${playerName}`);
+
+        // Collect new match IDs for feat checking
+        const newMatchIds = newMatches.map(m => m.matchId);
+
+        // Send notification for each new match (oldest first)
         for (const match of newMatches.reverse()) {
-          const embed = this.messageFormatter.formatNewMatch(match);
+          const embed = this.messageFormatter.formatNewMatch(match, playerName);
           await this.discordBot.sendNotification(null, embed);
-          
-          // Check for rampage in this match
-          await this.checkRampageForMatch(match.matchId, this.accountId, 'You');
-          
+
           // Small delay between notifications
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
+
+        // Check for multi-kills (triple, ultra, rampage) using feats API
+        await this.checkMultiKillsForMatches(accountId, playerName, newMatchIds, matchesData);
       }
     } catch (error) {
-      logger.error('Error checking for new matches:', error);
+      logger.error(`Error checking new matches for ${playerName}:`, error);
     }
   }
 
   /**
-   * Check for rampage in a specific match
+   * Check for multi-kills (triple, ultra, rampage) using STRATZ feats API
+   * This is more reliable than manual kill event analysis
    */
-  async checkRampageForMatch(matchId, accountId, playerName) {
+  async checkMultiKillsForMatches(accountId, playerName, matchIds, matchesData) {
     try {
-      // Skip if already detected
-      if (this.stateCache.isRampageDetected(matchId, accountId)) {
+      // Fetch player feats (achievements) from STRATZ
+      const feats = await this.stratzClient.getPlayerAchievements(accountId, 200);
+
+      if (!feats || feats.length === 0) {
+        // Feats not available yet (replay may not be parsed), fall back to kill events
+        await this.checkMultiKillsFromKillEvents(accountId, playerName, matchIds);
         return;
       }
 
-      // Fetch match with kill events
-      const matchData = await this.stratzClient.getMatchWithKillEvents(matchId);
-      
-      if (!matchData?.players) {
+      const matchIdSet = new Set(matchIds.map(id => parseInt(id)));
+
+      // Filter feats to only those from our new matches
+      const relevantFeats = feats.filter(feat => matchIdSet.has(feat.matchId));
+
+      if (relevantFeats.length === 0) {
+        // No feats found for these matches yet, fall back to kill events
+        await this.checkMultiKillsFromKillEvents(accountId, playerName, matchIds);
         return;
       }
 
-      const accountIdNum = parseInt(accountId);
-      const player = matchData.players.find(p => p.steamAccountId === accountIdNum);
-      
-      if (!player?.stats?.killEvents) {
-        return;
-      }
+      // Process each feat type
+      for (const feat of relevantFeats) {
+        const cacheKey = `${feat.type}_${feat.matchId}_${accountId}`;
 
-      // Detect rampages from kill events
-      const rampageCount = this.stratzClient.detectRampagesFromKillEvents(player.stats.killEvents);
-      
-      if (rampageCount > 0) {
-        logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${matchId}`);
-        
-        // Mark as detected
-        this.stateCache.markRampageDetected(matchId, accountId, playerName);
-        
-        // Send notification with full match data for extra stats
+        // Skip if already notified
+        if (this.stateCache.isMultiKillDetected(feat.matchId, accountId, feat.type)) {
+          continue;
+        }
+
+        // Find match data for context
+        const matchData = matchesData?.find(m => m.id === feat.matchId || m.id === parseInt(feat.matchId));
+        const player = matchData?.players?.[0];
+        const win = player ? (player.isRadiant === matchData.didRadiantWin) : false;
+
+        switch (feat.type) {
+          case 'RAMPAGE':
+            logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${feat.matchId} (via feats)`);
+            this.stateCache.markMultiKillDetected(feat.matchId, accountId, playerName, 'RAMPAGE');
+            await this.sendMultiKillNotification(playerName, feat, 'RAMPAGE', player, win, matchData);
+            break;
+
+          case 'ULTRA_KILL':
+            logger.info(`⚡ ULTRA KILL detected for ${playerName} in match ${feat.matchId} (via feats)`);
+            this.stateCache.markMultiKillDetected(feat.matchId, accountId, playerName, 'ULTRA_KILL');
+            await this.sendMultiKillNotification(playerName, feat, 'ULTRA_KILL', player, win, matchData);
+            break;
+
+          case 'TRIPLE_KILL':
+            logger.info(`💥 TRIPLE KILL detected for ${playerName} in match ${feat.matchId} (via feats)`);
+            this.stateCache.markMultiKillDetected(feat.matchId, accountId, playerName, 'TRIPLE_KILL');
+            await this.sendMultiKillNotification(playerName, feat, 'TRIPLE_KILL', player, win, matchData);
+            break;
+        }
+
+        // Small delay between notifications
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    } catch (error) {
+      logger.error(`Error checking multi-kills via feats for ${playerName}:`, error.message);
+      // Fall back to kill events analysis
+      await this.checkMultiKillsFromKillEvents(accountId, playerName, matchIds);
+    }
+  }
+
+  /**
+   * Fallback: Check for multi-kills using kill event analysis
+   * Used when feats are not yet available (replay not parsed)
+   */
+  async checkMultiKillsFromKillEvents(accountId, playerName, matchIds) {
+    for (const matchId of matchIds) {
+      try {
+        // Skip if already checked via feats
+        if (this.stateCache.isMultiKillDetected(matchId, accountId, 'RAMPAGE') ||
+            this.stateCache.isMultiKillDetected(matchId, accountId, 'ULTRA_KILL') ||
+            this.stateCache.isMultiKillDetected(matchId, accountId, 'TRIPLE_KILL')) {
+          continue;
+        }
+
+        // Also skip legacy rampage detection
+        if (this.stateCache.isRampageDetected(matchId, accountId)) {
+          continue;
+        }
+
+        const matchData = await this.stratzClient.getMatchWithKillEvents(matchId);
+
+        if (!matchData?.players) continue;
+
+        const accountIdNum = parseInt(accountId);
+        const player = matchData.players.find(p => p.steamAccountId === accountIdNum);
+
+        if (!player?.stats?.killEvents) continue;
+
+        const multiKills = this.stratzClient.detectMultiKillsFromKillEvents(player.stats.killEvents);
         const win = player.isRadiant === matchData.didRadiantWin;
-        const embed = this.messageFormatter.formatRampageNotification(
-          playerName,
-          player.heroId,
-          matchId,
-          player.kills || 0,
-          player.deaths || 0,
-          player.assists || 0,
-          win,
-          matchData
-        );
-        
-        await this.discordBot.sendNotification(null, embed);
+
+        if (multiKills.rampages > 0) {
+          logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${matchId} (via kill events)`);
+          this.stateCache.markMultiKillDetected(matchId, accountId, playerName, 'RAMPAGE');
+          // Also mark in legacy cache for backwards compatibility
+          this.stateCache.markRampageDetected(matchId, accountId, playerName);
+
+          const embed = this.messageFormatter.formatRampageNotification(
+            playerName, player.heroId, matchId,
+            player.kills || 0, player.deaths || 0, player.assists || 0,
+            win, matchData
+          );
+          await this.discordBot.sendNotification(null, embed);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+
+        if (multiKills.ultraKills > 0) {
+          logger.info(`⚡ ULTRA KILL detected for ${playerName} in match ${matchId} (via kill events)`);
+          this.stateCache.markMultiKillDetected(matchId, accountId, playerName, 'ULTRA_KILL');
+
+          const embed = this.messageFormatter.formatMultiKillNotification(
+            playerName, player.heroId, matchId,
+            player.kills || 0, player.deaths || 0, player.assists || 0,
+            win, 'ULTRA_KILL', matchData
+          );
+          await this.discordBot.sendNotification(null, embed);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+
+        if (multiKills.tripleKills > 0) {
+          logger.info(`💥 TRIPLE KILL detected for ${playerName} in match ${matchId} (via kill events)`);
+          this.stateCache.markMultiKillDetected(matchId, accountId, playerName, 'TRIPLE_KILL');
+
+          const embed = this.messageFormatter.formatMultiKillNotification(
+            playerName, player.heroId, matchId,
+            player.kills || 0, player.deaths || 0, player.assists || 0,
+            win, 'TRIPLE_KILL', matchData
+          );
+          await this.discordBot.sendNotification(null, embed);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } catch (error) {
+        logger.error(`Error checking kill events for match ${matchId}:`, error.message);
       }
-    } catch (error) {
-      logger.error(`Error checking rampage for match ${matchId}:`, error.message);
     }
   }
 
   /**
-   * Check for stat changes
+   * Send a multi-kill notification (triple, ultra, or rampage)
    */
-  async checkStatChanges() {
+  async sendMultiKillNotification(playerName, feat, killType, player, win, matchData) {
     try {
-      const playerData = await this.stratzClient.getPlayerTotals(this.accountId);
-      const winLossData = await this.stratzClient.getPlayerWinLoss(this.accountId);
+      const kills = player?.kills || 0;
+      const deaths = player?.deaths || 0;
+      const assists = player?.assists || 0;
+      const heroId = feat.heroId || player?.heroId;
 
-      const newStats = this.dataProcessor.processPlayerStats(playerData, winLossData);
-      const comparison = this.dataProcessor.detectStatChanges(newStats);
-
-      if (comparison.changed && comparison.changes.length > 0) {
-        logger.info('Detected stat changes:', comparison.changes);
-        
-        // Check for significant changes (MMR, rank)
-        const significantChanges = comparison.changes.filter(change => 
-          change.key === 'mmr' || change.key === 'rank_tier'
+      let embed;
+      if (killType === 'RAMPAGE') {
+        embed = this.messageFormatter.formatRampageNotification(
+          playerName, heroId, feat.matchId,
+          kills, deaths, assists, win, matchData
         );
+      } else {
+        embed = this.messageFormatter.formatMultiKillNotification(
+          playerName, heroId, feat.matchId,
+          kills, deaths, assists, win, killType, matchData
+        );
+      }
 
-        if (significantChanges.length > 0) {
-          const embed = this.messageFormatter.formatStats(newStats);
-          embed.setTitle('📊 Statistics Updated');
-          await this.discordBot.sendNotification(null, embed);
+      await this.discordBot.sendNotification(null, embed);
+    } catch (error) {
+      logger.error(`Error sending ${killType} notification:`, error.message);
+    }
+  }
+
+  /**
+   * Check for rank changes using STRATZ seasonRank
+   */
+  async checkRankChanges() {
+    try {
+      const players = this.getAllPlayers();
+
+      for (const player of players) {
+        const accountId = player.ids[0];
+        const playerName = player.name;
+
+        try {
+          const playerData = await this.stratzClient.getPlayer(accountId);
+
+          if (!playerData?.steamAccount?.seasonRank) continue;
+
+          const currentRank = playerData.steamAccount.seasonRank;
+          const currentLeaderboard = playerData.steamAccount.seasonLeaderboardRank;
+          const cacheKey = `rank_${accountId}`;
+          const cachedRank = this.stateCache.get(cacheKey);
+
+          if (cachedRank === null || cachedRank === undefined) {
+            // First time seeing this player's rank, cache it
+            this.stateCache.set(cacheKey, currentRank);
+            this.stateCache.set(`leaderboard_${accountId}`, currentLeaderboard);
+            continue;
+          }
+
+          if (currentRank !== cachedRank) {
+            const oldRank = cachedRank;
+            const rankUp = currentRank > oldRank;
+
+            logger.info(`🏅 Rank change for ${playerName}: ${oldRank} → ${currentRank} (${rankUp ? 'UP' : 'DOWN'})`);
+
+            // Update cache
+            this.stateCache.set(cacheKey, currentRank);
+            this.stateCache.set(`leaderboard_${accountId}`, currentLeaderboard);
+
+            // Send rank change notification
+            const embed = this.messageFormatter.formatRankChange(
+              playerName, oldRank, currentRank, currentLeaderboard
+            );
+            await this.discordBot.sendNotification(null, embed);
+          }
+
+          // Small delay between players
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } catch (error) {
+          logger.error(`Error checking rank for ${playerName}:`, error.message);
         }
       }
     } catch (error) {
-      logger.error('Error checking for stat changes:', error);
+      logger.error('Error checking rank changes:', error);
     }
   }
 
@@ -240,12 +444,12 @@ export class PollingService {
       if (liveMatch) {
         // Check if we've already notified about this live match
         const lastLiveMatchId = this.stateCache.cache.lastLiveMatchId;
-        
+
         if (lastLiveMatchId !== liveMatch.matchId) {
           logger.info('Player is in a live match');
           const embed = this.messageFormatter.formatLiveMatch(liveMatch);
           await this.discordBot.sendNotification(null, embed);
-          
+
           this.stateCache.cache.lastLiveMatchId = liveMatch.matchId;
         }
       }
@@ -268,7 +472,7 @@ export class PollingService {
   getPreviousDayRange() {
     // Get current date in UK time
     const now = new Date();
-    
+
     // Create formatter for UK timezone to get the current date parts
     const ukFormatter = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Europe/London',
@@ -276,33 +480,33 @@ export class PollingService {
       month: '2-digit',
       day: '2-digit'
     });
-    
+
     // Parse the UK date
     const ukParts = ukFormatter.formatToParts(now);
     const ukYear = parseInt(ukParts.find(p => p.type === 'year').value);
     const ukMonth = parseInt(ukParts.find(p => p.type === 'month').value) - 1; // 0-indexed
     const ukDay = parseInt(ukParts.find(p => p.type === 'day').value);
-    
+
     // Create yesterday's date in UK time
     const yesterdayUK = new Date(Date.UTC(ukYear, ukMonth, ukDay - 1));
-    
+
     // Calculate start of yesterday (00:00:00 UK time)
     // UK timezone offset varies (GMT/BST), so we need to account for it
     const startOfYesterday = new Date(yesterdayUK);
     startOfYesterday.setUTCHours(0, 0, 0, 0);
-    
+
     // Adjust for UK timezone offset
     // Get the offset for yesterday's date
     const ukOffset = this.getUKOffset(startOfYesterday);
     startOfYesterday.setTime(startOfYesterday.getTime() - ukOffset * 60 * 1000);
-    
+
     // End of yesterday (23:59:59 UK time)
     const endOfYesterday = new Date(startOfYesterday);
     endOfYesterday.setTime(endOfYesterday.getTime() + (24 * 60 * 60 * 1000) - 1000);
-    
+
     // Format date as "11-Jan-2026"
     const dateString = this.formatDateString(ukDay - 1, ukMonth, ukYear);
-    
+
     return {
       startTimestamp: Math.floor(startOfYesterday.getTime() / 1000),
       endTimestamp: Math.floor(endOfYesterday.getTime() / 1000),
@@ -337,17 +541,17 @@ export class PollingService {
   async sendDailySummary() {
     try {
       logger.info('Generating daily summary for all friends...');
-      
+
       // Get previous day range in UK time
       const { startTimestamp, endTimestamp, dateString } = this.getPreviousDayRange();
       logger.info(`Time range: Previous day (${dateString} UK time)`);
       logger.detailInfo(`From: ${new Date(startTimestamp * 1000).toISOString()} To: ${new Date(endTimestamp * 1000).toISOString()}`);
-      
+
       const playerSummaries = [];
-      const allRampages = []; // Collect all rampages for separate notifications
+      const allMultiKills = []; // Collect all multi-kills for separate notifications
 
       // Get all friends or just the main account if no friends manager
-      const friends = this.friendsManager 
+      const friends = this.friendsManager
         ? this.friendsManager.getAllFriends()
         : [{ name: 'You', ids: [this.accountId] }];
 
@@ -359,19 +563,19 @@ export class PollingService {
         try {
           let bestAccountId = friend.ids[0];
           let recentMatches = [];
-      
+
           // For players with multiple IDs, check all accounts to find matches
           if (friend.ids.length > 1 && this.friendsManager) {
             let bestMatchCount = 0;
             let bestAccountMatches = [];
-            
+
             for (const accountId of friend.ids) {
               try {
                 // Use STRATZ's time-based query for efficiency
                 const matchesData = await this.stratzClient.getPlayerMatchesSince(accountId, startTimestamp, 50);
-                
+
                 // Filter matches to only include those within the previous day
-                const filteredMatches = matchesData.filter(m => 
+                const filteredMatches = matchesData.filter(m =>
                   m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
                 );
 
@@ -380,51 +584,53 @@ export class PollingService {
                   bestAccountId = accountId;
                   bestAccountMatches = filteredMatches;
                 }
-                
+
                 // Small delay between account checks
                 await new Promise(resolve => setTimeout(resolve, 100));
               } catch (error) {
                 logger.warn(`Error checking account ${accountId} for ${friend.name}:`, error.message);
               }
             }
-            
+
             recentMatches = bestAccountMatches;
           } else {
             // Single account - use time-based query
             const matchesData = await this.stratzClient.getPlayerMatchesSince(bestAccountId, startTimestamp, 50);
             // Filter to only previous day
-            recentMatches = matchesData.filter(m => 
+            recentMatches = matchesData.filter(m =>
               m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
             );
           }
-          
+
           // Skip if no matches
           if (recentMatches.length === 0) {
             logger.detailInfo(`No matches found for ${friend.name} on ${dateString}`);
             continue;
           }
-          
+
           logger.detailInfo(`Found ${recentMatches.length} matches for ${friend.name}`);
 
           // Process daily summary for this player
           const summary = this.dataProcessor.processDailySummary(recentMatches);
-          
+
           // Get match IDs from recent matches
           const matchIds = recentMatches.map(m => m.id);
-          
-          // Check feats for rampages
+
+          // Check feats for all multi-kills (triple, ultra, rampage)
           try {
             const feats = await this.stratzClient.getPlayerAchievements(bestAccountId, 200);
-            const rampageFeats = this.stratzClient.getRampageFeatsFromMatches(feats, matchIds);
-            
-            summary.rampages = rampageFeats.length;
-            
-            for (const feat of rampageFeats) {
+            const multiKillFeats = this.stratzClient.getMultiKillFeatsFromMatches(feats, matchIds);
+
+            summary.rampages = multiKillFeats.filter(f => f.type === 'RAMPAGE').length;
+            summary.ultraKills = multiKillFeats.filter(f => f.type === 'ULTRA_KILL').length;
+            summary.tripleKills = multiKillFeats.filter(f => f.type === 'TRIPLE_KILL').length;
+
+            for (const feat of multiKillFeats) {
               const matchData = recentMatches.find(m => m.id === feat.matchId);
               if (matchData) {
                 const player = matchData.players?.[0];
                 const win = player?.isRadiant === matchData.didRadiantWin;
-                allRampages.push({
+                allMultiKills.push({
                   playerName: friend.name,
                   heroId: feat.heroId,
                   matchId: feat.matchId,
@@ -432,18 +638,19 @@ export class PollingService {
                   deaths: player?.deaths || 0,
                   assists: player?.assists || 0,
                   win: win,
-                  matchData: matchData // Store for enhanced notification
+                  type: feat.type,
+                  matchData: matchData
                 });
               }
             }
-            
-            if (rampageFeats.length > 0) {
-              logger.info(`${friend.name} got ${rampageFeats.length} rampage(s)!`);
+
+            if (multiKillFeats.length > 0) {
+              logger.info(`${friend.name} got ${multiKillFeats.length} multi-kill feat(s)!`);
             }
           } catch (error) {
             logger.warn(`Error fetching feats for ${friend.name}:`, error.message);
           }
-          
+
           playerSummaries.push({
             name: friend.name,
             accountId: bestAccountId,
@@ -457,29 +664,37 @@ export class PollingService {
         }
       }
 
-      // First, send rampage notifications (separate messages)
-      if (allRampages.length > 0) {
-        logger.info(`🔥 Sending ${allRampages.length} rampage notification(s)...`);
-        for (const rampage of allRampages) {
-          // Skip if already notified about this rampage
-          if (!this.stateCache.isRampageDetected(rampage.matchId, rampage.playerName)) {
-            const embed = this.messageFormatter.formatRampageNotification(
-              rampage.playerName,
-              rampage.heroId,
-              rampage.matchId,
-              rampage.kills,
-              rampage.deaths,
-              rampage.assists,
-              rampage.win,
-              rampage.matchData
-            );
-            
-            await this.discordBot.sendNotification(null, embed);
-            this.stateCache.markRampageDetected(rampage.matchId, rampage.playerName, rampage.playerName);
-            
-            // Small delay between notifications
-            await new Promise(resolve => setTimeout(resolve, 1000));
+      // First, send multi-kill notifications (separate messages)
+      if (allMultiKills.length > 0) {
+        logger.info(`🔥 Sending ${allMultiKills.length} multi-kill notification(s)...`);
+        for (const mk of allMultiKills) {
+          // Skip if already notified
+          if (this.stateCache.isMultiKillDetected(mk.matchId, mk.playerName, mk.type)) {
+            continue;
           }
+          // Also check legacy rampage cache
+          if (mk.type === 'RAMPAGE' && this.stateCache.isRampageDetected(mk.matchId, mk.playerName)) {
+            continue;
+          }
+
+          let embed;
+          if (mk.type === 'RAMPAGE') {
+            embed = this.messageFormatter.formatRampageNotification(
+              mk.playerName, mk.heroId, mk.matchId,
+              mk.kills, mk.deaths, mk.assists, mk.win, mk.matchData
+            );
+          } else {
+            embed = this.messageFormatter.formatMultiKillNotification(
+              mk.playerName, mk.heroId, mk.matchId,
+              mk.kills, mk.deaths, mk.assists, mk.win, mk.type, mk.matchData
+            );
+          }
+
+          await this.discordBot.sendNotification(null, embed);
+          this.stateCache.markMultiKillDetected(mk.matchId, mk.playerName, mk.playerName, mk.type);
+
+          // Small delay between notifications
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
 
@@ -493,7 +708,7 @@ export class PollingService {
         await this.discordBot.sendNotification(null, embed);
         logger.info(`Daily summary sent for ${playerSummaries.length} player(s)`);
       }
-      
+
       // Update last daily summary timestamp
       this.stateCache.setLastDailySummary(new Date().toISOString());
       await this.stateCache.save();

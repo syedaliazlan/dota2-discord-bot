@@ -16,7 +16,8 @@ export class StateCache {
       lastLiveMatchId: null,
       lastDailySummary: null,
       dailyMatches: [],
-      detectedRampages: [] // Track detected rampages to avoid duplicates
+      detectedRampages: [], // Track detected rampages to avoid duplicates
+      detectedMultiKills: [] // Track all multi-kills (triple, ultra, rampage) to avoid duplicates
     };
   }
 
@@ -212,6 +213,39 @@ export class StateCache {
     // Keep only last 100 rampages to prevent cache from growing too large
     if (this.cache.detectedRampages.length > 100) {
       this.cache.detectedRampages = this.cache.detectedRampages.slice(-100);
+    }
+  }
+
+  /**
+   * Check if a multi-kill was already detected
+   */
+  isMultiKillDetected(matchId, accountId, killType) {
+    if (!this.cache.detectedMultiKills) {
+      this.cache.detectedMultiKills = [];
+    }
+    return this.cache.detectedMultiKills.some(
+      mk => mk.matchId === matchId && mk.accountId === accountId && mk.killType === killType
+    );
+  }
+
+  /**
+   * Mark a multi-kill as detected
+   */
+  markMultiKillDetected(matchId, accountId, playerName, killType) {
+    if (!this.cache.detectedMultiKills) {
+      this.cache.detectedMultiKills = [];
+    }
+    this.cache.detectedMultiKills.push({
+      matchId,
+      accountId,
+      playerName,
+      killType,
+      detectedAt: new Date().toISOString()
+    });
+
+    // Keep only last 200 entries to prevent cache from growing too large
+    if (this.cache.detectedMultiKills.length > 200) {
+      this.cache.detectedMultiKills = this.cache.detectedMultiKills.slice(-200);
     }
   }
 }

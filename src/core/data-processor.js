@@ -286,7 +286,9 @@ export class DataProcessor {
         totalKills: 0,
         totalDeaths: 0,
         totalAssists: 0,
-        rampages: 0
+        rampages: 0,
+        ultraKills: 0,
+        tripleKills: 0
       };
     }
 
@@ -356,7 +358,9 @@ export class DataProcessor {
       totalKills,
       totalDeaths,
       totalAssists,
-      rampages: 0
+      rampages: 0,
+      ultraKills: 0,
+      tripleKills: 0
     };
   }
 

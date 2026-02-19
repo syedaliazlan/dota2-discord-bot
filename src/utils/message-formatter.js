@@ -294,16 +294,25 @@ export class MessageFormatter {
   /**
    * Format new match notification
    */
-  formatNewMatch(match) {
+  formatNewMatch(match, playerName = null) {
     const result = match.win ? '✅ Victory' : '❌ Defeat';
     const duration = this.formatDuration(match.duration);
+    const heroName = this.getHeroName(match.heroId);
+    const title = playerName
+      ? `🎮 ${playerName} - New Match Completed`
+      : '🎮 New Match Completed';
 
     const embed = new EmbedBuilder()
-      .setTitle('🎮 New Match Completed')
+      .setTitle(title)
       .setColor(match.win ? 0x00FF00 : 0xFF0000)
       .setTimestamp();
 
     embed.addFields(
+      {
+        name: 'Hero',
+        value: heroName || 'Unknown',
+        inline: true
+      },
       {
         name: 'Result',
         value: result,
@@ -426,11 +435,21 @@ export class MessageFormatter {
       }
     ];
 
-    // Add rampage stats if any
+    // Add multi-kill stats if any
+    const mkParts = [];
     if (summary.rampages > 0) {
+      mkParts.push(`🔥 **${summary.rampages}** Rampage${summary.rampages > 1 ? 's' : ''}`);
+    }
+    if (summary.ultraKills > 0) {
+      mkParts.push(`⚡ **${summary.ultraKills}** Ultra Kill${summary.ultraKills > 1 ? 's' : ''}`);
+    }
+    if (summary.tripleKills > 0) {
+      mkParts.push(`💥 **${summary.tripleKills}** Triple Kill${summary.tripleKills > 1 ? 's' : ''}`);
+    }
+    if (mkParts.length > 0) {
       fields.push({
-        name: '🔥 Rampages',
-        value: `**${summary.rampages}** Rampage${summary.rampages > 1 ? 's' : ''}`,
+        name: '💀 Multi-Kills',
+        value: mkParts.join('\n'),
         inline: true
       });
     }
@@ -503,8 +522,18 @@ export class MessageFormatter {
 
       // Multi-kill stats line
       let rampageLine = '';
+      const multiKillParts = [];
       if (summary.rampages > 0) {
-        rampageLine = `\n🔥 **${summary.rampages}** Rampage${summary.rampages > 1 ? 's' : ''}`;
+        multiKillParts.push(`🔥 **${summary.rampages}** Rampage${summary.rampages > 1 ? 's' : ''}`);
+      }
+      if (summary.ultraKills > 0) {
+        multiKillParts.push(`⚡ **${summary.ultraKills}** Ultra Kill${summary.ultraKills > 1 ? 's' : ''}`);
+      }
+      if (summary.tripleKills > 0) {
+        multiKillParts.push(`💥 **${summary.tripleKills}** Triple Kill${summary.tripleKills > 1 ? 's' : ''}`);
+      }
+      if (multiKillParts.length > 0) {
+        rampageLine = '\n' + multiKillParts.join(' | ');
       }
 
       // Use larger, more prominent player icon and name
@@ -617,6 +646,148 @@ export class MessageFormatter {
           inline: true
         });
       }
+    }
+
+    return embed;
+  }
+
+  /**
+   * Format multi-kill notification (triple kill, ultra kill)
+   */
+  formatMultiKillNotification(playerName, heroId, matchId, kills, deaths, assists, win, killType, matchData = null) {
+    const heroName = this.getHeroName(heroId);
+    const kda = this.calculateKDA(kills, deaths, assists);
+    const winEmoji = win ? '✅' : '❌';
+    const winText = win ? 'VICTORY' : 'DEFEAT';
+
+    const killTypeConfig = {
+      'TRIPLE_KILL': {
+        title: '💥 T R I P L E   K I L L ! 💥',
+        killCount: '3 KILLS',
+        color: 0xFFA500, // Orange
+        messages: [
+          'scored a TRIPLE KILL!',
+          'took down THREE enemies!',
+          'got a TRIPLE!',
+          'is on FIRE!'
+        ]
+      },
+      'ULTRA_KILL': {
+        title: '⚡💀 U L T R A   K I L L ! 💀⚡',
+        killCount: '4 KILLS',
+        color: 0xFF6600, // Dark orange
+        messages: [
+          'got an ULTRA KILL!',
+          'destroyed FOUR enemies!',
+          'is DOMINATING!',
+          'went on a TEAR!'
+        ]
+      }
+    };
+
+    const config = killTypeConfig[killType] || killTypeConfig['TRIPLE_KILL'];
+    const randomMessage = config.messages[Math.floor(Math.random() * config.messages.length)];
+
+    const embed = new EmbedBuilder()
+      .setTitle(config.title)
+      .setDescription(
+        `# ${playerName.toUpperCase()}\n` +
+        `### ${randomMessage}\n\n` +
+        `**${config.killCount}** in rapid succession as **${heroName}**!`
+      )
+      .setColor(config.color)
+      .setTimestamp();
+
+    // Add hero thumbnail from Dota 2 CDN
+    const heroShortName = this.getHeroShortName(heroId);
+    if (heroShortName) {
+      embed.setThumbnail(`https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/${heroShortName}.png`);
+    }
+
+    embed.addFields(
+      {
+        name: '🎮 Hero',
+        value: `**${heroName}**`,
+        inline: true
+      },
+      {
+        name: '⚔️ Final KDA',
+        value: `**${kills}/${deaths}/${assists}** (${kda})`,
+        inline: true
+      },
+      {
+        name: `${winEmoji} Result`,
+        value: `**${winText}**`,
+        inline: true
+      }
+    );
+
+    // Add extra stats if match data is available
+    if (matchData) {
+      const player = matchData.players?.find(p => p.heroId === heroId) || matchData.players?.[0];
+
+      if (player) {
+        const extraStats = [];
+        if (player.goldPerMinute) extraStats.push(`💰 GPM: **${player.goldPerMinute}**`);
+        if (player.experiencePerMinute) extraStats.push(`📈 XPM: **${player.experiencePerMinute}**`);
+
+        if (extraStats.length > 0) {
+          embed.addFields({
+            name: '📊 Performance',
+            value: extraStats.join('\n'),
+            inline: false
+          });
+        }
+      }
+
+      if (matchData.durationSeconds) {
+        const mins = Math.floor(matchData.durationSeconds / 60);
+        const secs = matchData.durationSeconds % 60;
+        embed.addFields({
+          name: '⏱️ Match Duration',
+          value: `${mins}:${secs.toString().padStart(2, '0')}`,
+          inline: true
+        });
+      }
+    }
+
+    return embed;
+  }
+
+  /**
+   * Format rank change notification
+   */
+  formatRankChange(playerName, oldRank, newRank, leaderboardRank = null) {
+    const oldRankText = this.getRankText(oldRank);
+    const newRankText = this.getRankText(newRank);
+    const rankUp = newRank > oldRank;
+
+    const embed = new EmbedBuilder()
+      .setTimestamp();
+
+    if (rankUp) {
+      embed.setTitle('🏅 RANK UP!')
+        .setColor(0x00FF00) // Green
+        .setDescription(
+          `# ${playerName.toUpperCase()}\n` +
+          `### has ranked up!\n\n` +
+          `**${oldRankText}** → **${newRankText}**`
+        );
+    } else {
+      embed.setTitle('📉 Rank Down')
+        .setColor(0xFF4444) // Red
+        .setDescription(
+          `**${playerName}** rank changed\n\n` +
+          `**${oldRankText}** → **${newRankText}**`
+        );
+    }
+
+    if (leaderboardRank) {
+      embed.addFields({
+        name: '🏆 Leaderboard',
+        value: `#${leaderboardRank}`,
+        inline: true
+      });
     }
 
     return embed;

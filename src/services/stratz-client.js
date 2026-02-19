@@ -39,7 +39,7 @@ export class StratzClient {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiToken}`,
-        'User-Agent': 'Dota2DiscordBot/1.0'
+        'User-Agent': 'STRATZ_API'
       }
     };
 
@@ -733,11 +733,25 @@ export class StratzClient {
    */
   getRampageFeatsFromMatches(feats, matchIds) {
     if (!feats || !matchIds || matchIds.length === 0) return [];
-    
+
     const matchIdSet = new Set(matchIds.map(id => parseInt(id)));
-    
-    return feats.filter(feat => 
+
+    return feats.filter(feat =>
       feat.type === 'RAMPAGE' && matchIdSet.has(feat.matchId)
+    );
+  }
+
+  /**
+   * Get all multi-kill feats (triple, ultra, rampage) for specific match IDs
+   */
+  getMultiKillFeatsFromMatches(feats, matchIds) {
+    if (!feats || !matchIds || matchIds.length === 0) return [];
+
+    const matchIdSet = new Set(matchIds.map(id => parseInt(id)));
+    const multiKillTypes = new Set(['TRIPLE_KILL', 'ULTRA_KILL', 'RAMPAGE']);
+
+    return feats.filter(feat =>
+      multiKillTypes.has(feat.type) && matchIdSet.has(feat.matchId)
     );
   }
 
