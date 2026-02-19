@@ -632,6 +632,87 @@ export class StratzClient {
   }
 
   /**
+   * Get hero meta statistics (win rates, pick rates)
+   * Note: Bracket filtering removed due to API enum issues - shows all ranks
+   */
+  async getHeroMetaStats(bracket = null) {
+    logger.debug(`Fetching hero meta stats for bracket: ${bracket || 'all'}`);
+    
+    // Use winWeek query which is reliable across all brackets
+    const query = `
+      query GetHeroMetaStats {
+        heroStats {
+          winWeek(take: 150) {
+            heroId
+            matchCount
+            winCount
+          }
+        }
+      }
+    `;
+    
+    try {
+      const data = await this.query(query, {});
+      const weekStats = data?.heroStats?.winWeek || [];
+      
+      if (weekStats.length === 0) {
+        logger.warn('No hero stats returned from winWeek query');
+        return [];
+      }
+      
+      // Get hero names to enrich the data
+      const heroes = await this.getHeroes();
+      const heroMap = new Map(heroes.map(h => [h.id, h.displayName || h.name]));
+      
+      // Process and calculate win rates
+      return weekStats.map(stat => ({
+        heroId: stat.heroId,
+        heroName: heroMap.get(stat.heroId) || `Hero ${stat.heroId}`,
+        matchCount: stat.matchCount,
+        winCount: stat.winCount,
+        winRate: stat.matchCount > 0 ? (stat.winCount / stat.matchCount) * 100 : 0
+      }));
+    } catch (error) {
+      logger.error(`Hero meta stats query failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get player's current rank
+   */
+  async getPlayerRank(accountId) {
+    logger.debug(`Fetching rank for account ${accountId}`);
+    
+    const query = `
+      query GetPlayerRank($steamAccountId: Long!) {
+        player(steamAccountId: $steamAccountId) {
+          steamAccountId
+          steamAccount {
+            seasonRank
+            seasonLeaderboardRank
+            name
+          }
+        }
+      }
+    `;
+
+    const data = await this.query(query, { steamAccountId: parseInt(accountId) });
+    const player = data?.player;
+    
+    if (!player?.steamAccount) {
+      return null;
+    }
+    
+    return {
+      accountId: player.steamAccountId,
+      name: player.steamAccount.name,
+      rank: player.steamAccount.seasonRank,
+      leaderboardRank: player.steamAccount.seasonLeaderboardRank
+    };
+  }
+
+  /**
    * Get game modes
    */
   async getGameModes() {
