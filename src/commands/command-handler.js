@@ -82,7 +82,7 @@ export class CommandHandler {
         } else if (interaction.commandName === 'heroes') {
           await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.accountId);
         } else if (interaction.commandName === 'live') {
-          await command.execute(interaction, this.stratzClient, this.messageFormatter, this.accountId);
+          await command.execute(interaction, this.stratzClient, this.messageFormatter, this.accountId, this.friendsManager);
         } else if (interaction.commandName === 'achievements') {
           await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.accountId);
         } else if (interaction.commandName === 'match') {
