@@ -19,6 +19,7 @@ export class StateCache {
       dailyMatches: [],
       detectedRampages: [], // Track detected rampages to avoid duplicates (legacy)
       detectedMultiKills: [], // Track detected multi-kills (rampages, ultra kills, triple kills)
+      pendingMultiKillChecks: [], // Matches waiting for multi-kill data to become available
       playerRanks: {} // Track player ranks for rank change notifications
     };
   }
@@ -309,8 +310,78 @@ export class StateCache {
     if (oldLeaderboardRank !== null && newLeaderboardRank !== null && oldLeaderboardRank !== newLeaderboardRank) {
       return { oldRank, oldLeaderboardRank };
     }
-    
+
     return null;
+  }
+
+  /**
+   * Add a match to the pending multi-kill check queue
+   * These matches will be re-checked on subsequent poll cycles until data is available
+   */
+  addPendingMultiKillCheck(matchId, accountId, playerName) {
+    if (!this.cache.pendingMultiKillChecks) {
+      this.cache.pendingMultiKillChecks = [];
+    }
+
+    // Don't add if already pending or already detected
+    const alreadyPending = this.cache.pendingMultiKillChecks.some(
+      p => p.matchId === matchId && p.accountId === accountId
+    );
+    if (alreadyPending || this.isMultiKillDetected(matchId, accountId)) {
+      return;
+    }
+
+    this.cache.pendingMultiKillChecks.push({
+      matchId,
+      accountId,
+      playerName,
+      checkCount: 0,
+      addedAt: Date.now()
+    });
+  }
+
+  /**
+   * Get all pending multi-kill checks
+   */
+  getPendingMultiKillChecks() {
+    if (!this.cache.pendingMultiKillChecks) {
+      this.cache.pendingMultiKillChecks = [];
+    }
+    return this.cache.pendingMultiKillChecks;
+  }
+
+  /**
+   * Remove a match from the pending multi-kill check queue
+   */
+  removePendingMultiKillCheck(matchId, accountId) {
+    if (!this.cache.pendingMultiKillChecks) return;
+    this.cache.pendingMultiKillChecks = this.cache.pendingMultiKillChecks.filter(
+      p => !(p.matchId === matchId && p.accountId === accountId)
+    );
+  }
+
+  /**
+   * Increment the check count for a pending multi-kill check
+   */
+  incrementMultiKillCheckCount(matchId, accountId) {
+    if (!this.cache.pendingMultiKillChecks) return;
+    const pending = this.cache.pendingMultiKillChecks.find(
+      p => p.matchId === matchId && p.accountId === accountId
+    );
+    if (pending) {
+      pending.checkCount++;
+    }
+  }
+
+  /**
+   * Clean up old pending checks (older than 1 hour)
+   */
+  cleanupPendingMultiKillChecks() {
+    if (!this.cache.pendingMultiKillChecks) return;
+    const oneHourAgo = Date.now() - (60 * 60 * 1000);
+    this.cache.pendingMultiKillChecks = this.cache.pendingMultiKillChecks.filter(
+      p => p.addedAt > oneHourAgo
+    );
   }
 }
 

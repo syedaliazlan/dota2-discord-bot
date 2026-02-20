@@ -2,6 +2,7 @@ import { loadConfig } from './utils/config.js';
 import { logger } from './utils/logger.js';
 import { DiscordBot } from './bot/discord-bot.js';
 import { StratzClient } from './services/stratz-client.js';
+import { OpenDotaClient } from './services/opendota-client.js';
 import { DataProcessor } from './core/data-processor.js';
 import { StateCache } from './core/state-cache.js';
 import { MessageFormatter } from './utils/message-formatter.js';
@@ -33,6 +34,10 @@ async function main() {
     const stratzClient = new StratzClient(config.stratz.apiToken, config.stratz.proxies);
     const dataProcessor = new DataProcessor(stateCache, config.steam.accountId);
     
+    // Initialize OpenDota client (for multi-kill detection)
+    const openDotaClient = new OpenDotaClient(config.opendota.apiKey);
+    logger.info(`OpenDota client initialized${config.opendota.apiKey ? ' (with API key)' : ' (no API key - using free tier)'}`);
+
     // Initialize friends manager
     const friendsManager = new FriendsManager(config.friends);
     
@@ -102,7 +107,8 @@ async function main() {
       config.steam.accountId,
       config.polling.interval,
       friendsManager,
-      config.dailySummary
+      config.dailySummary,
+      openDotaClient
     );
 
     // Start polling service

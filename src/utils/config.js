@@ -89,6 +89,9 @@ export function loadConfig() {
       apiToken: process.env.STRATZ_API_TOKEN || null,
       proxies: proxyList
     },
+    opendota: {
+      apiKey: process.env.OPENDOTA_API_KEY || null
+    },
     polling: {
       interval: parseInt(process.env.POLLING_INTERVAL || '5', 10) // minutes
     },

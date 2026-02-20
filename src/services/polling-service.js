@@ -3,11 +3,13 @@ import { logger } from '../utils/logger.js';
 
 /**
  * Polling service to check for updates at regular intervals
- * Uses STRATZ API for all data
+ * Uses STRATZ API for match detection, rank tracking, and stats
+ * Uses OpenDota API as additional source for multi-kill detection
  */
 export class PollingService {
-  constructor(stratzClient, dataProcessor, stateCache, discordBot, messageFormatter, accountId, intervalMinutes, friendsManager = null, dailySummaryConfig = null) {
+  constructor(stratzClient, dataProcessor, stateCache, discordBot, messageFormatter, accountId, intervalMinutes, friendsManager = null, dailySummaryConfig = null, openDotaClient = null) {
     this.stratzClient = stratzClient;
+    this.openDotaClient = openDotaClient;
     this.dataProcessor = dataProcessor;
     this.stateCache = stateCache;
     this.discordBot = discordBot;
@@ -22,6 +24,8 @@ export class PollingService {
     this.isRunning = false;
     this.cronJob = null;
     this.dailySummaryJob = null;
+    // Max re-checks for pending multi-kill detection (6 checks * 5 min = 30 min window)
+    this.maxMultiKillChecks = 6;
   }
 
   /**
@@ -96,8 +100,11 @@ export class PollingService {
    */
   async checkForUpdates() {
     try {
-      // Check for new matches
+      // Check for new matches (adds to pending multi-kill checks)
       await this.checkNewMatches();
+
+      // Process pending multi-kill checks (retries across multiple poll cycles)
+      await this.checkPendingMultiKills();
 
       // Check for stat changes
       await this.checkStatChanges();
@@ -105,8 +112,8 @@ export class PollingService {
       // Check for rank changes
       await this.checkRankChanges();
 
-      // Live match notifications disabled
-      // await this.checkLiveMatches();
+      // Clean up old pending checks
+      this.stateCache.cleanupPendingMultiKillChecks();
 
       // Save cache after checks
       await this.stateCache.save();
@@ -117,42 +124,45 @@ export class PollingService {
 
   /**
    * Check for new matches using STRATZ API
-   * Checks main account and all friends for new matches and rampages
+   * Checks main account and all friends for new matches
+   * New matches are added to pending multi-kill checks for reliable detection
    */
   async checkNewMatches() {
     try {
-      // Get all players to check (main account + friends)
-      const playersToCheck = this.friendsManager 
+      const playersToCheck = this.friendsManager
         ? this.friendsManager.getAllFriends()
         : [{ name: 'You', ids: [this.accountId] }];
 
       for (const player of playersToCheck) {
-        // Use primary account ID for each player
         const accountId = player.ids[0];
         const playerName = player.name;
 
         try {
-          // Get recent matches from STRATZ
           const matchesData = await this.stratzClient.getRecentMatches(accountId, 5);
-          
+
           if (!matchesData || matchesData.length === 0) {
             continue;
           }
 
-          // Process and detect new matches for this player
           const processed = this.dataProcessor.processRecentMatches(matchesData, accountId);
           const newMatches = this.dataProcessor.detectNewMatches(processed, accountId);
 
           if (newMatches.length > 0) {
             logger.info(`Found ${newMatches.length} new match(es) for ${playerName}`);
 
-            // Check for multi-kills (rampages, ultra kills, triple kills) in new matches
-            // Uses feats API first (batch), with kill events as fallback
-            const newMatchIds = newMatches.map(m => m.matchId);
-            await this.checkMultiKillsForMatches(newMatchIds, accountId, playerName);
+            // Queue each new match for multi-kill checking
+            // These will be processed in checkPendingMultiKills() with retry logic
+            for (const match of newMatches) {
+              this.stateCache.addPendingMultiKillCheck(match.matchId, accountId, playerName);
+
+              // Request OpenDota parse immediately (fire and forget)
+              // This ensures multi_kills data will be available on future checks
+              if (this.openDotaClient) {
+                this.openDotaClient.requestParse(match.matchId).catch(() => {});
+              }
+            }
           }
 
-          // Small delay between players to avoid API rate limits
           await new Promise(resolve => setTimeout(resolve, 200));
         } catch (error) {
           logger.warn(`Error checking matches for ${playerName}:`, error.message);
@@ -164,78 +174,184 @@ export class PollingService {
   }
 
   /**
-   * Check for multi-kills in new matches using feats API first, kill events as fallback
+   * Process pending multi-kill checks across multiple data sources
+   * Retries across poll cycles until data is available or max checks reached
+   *
+   * Data sources (checked in order):
+   * 1. OpenDota match details - direct multi_kills field (most reliable when parsed)
+   * 2. STRATZ feats API - pre-calculated achievements (rampages, ultra kills, triple kills)
+   * 3. STRATZ kill events - timestamp analysis fallback (only on final check)
    */
-  async checkMultiKillsForMatches(matchIds, accountId, playerName) {
-    try {
-      // Try feats API first (more reliable - STRATZ pre-calculates these)
-      const feats = await this.stratzClient.getPlayerAchievements(accountId, 200);
-      const multiKillFeats = feats ? this.stratzClient.getMultiKillFeatsFromMatches(feats, matchIds) : [];
+  async checkPendingMultiKills() {
+    const pendingChecks = this.stateCache.getPendingMultiKillChecks();
+    if (pendingChecks.length === 0) return;
 
-      if (multiKillFeats.length > 0) {
-        for (const feat of multiKillFeats) {
-          if (this.stateCache.isMultiKillDetected(feat.matchId, accountId)) continue;
+    logger.debug(`Processing ${pendingChecks.length} pending multi-kill check(s)`);
 
-          this.stateCache.markMultiKillDetected(feat.matchId, accountId, playerName);
+    // Group pending checks by accountId for efficient STRATZ feats batching
+    const checksByAccount = new Map();
+    for (const check of [...pendingChecks]) {
+      if (!checksByAccount.has(check.accountId)) {
+        checksByAccount.set(check.accountId, []);
+      }
+      checksByAccount.get(check.accountId).push(check);
+    }
 
-          if (feat.type === 'RAMPAGE') {
-            logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${feat.matchId} (via feats)`);
-            const embed = this.messageFormatter.formatRampageNotification(
-              playerName, feat.heroId, feat.matchId, 0, 0, 0, false, null
-            );
-            await this.discordBot.sendNotification(null, embed);
-          } else if (feat.type === 'ULTRA_KILL') {
-            logger.info(`⚡ ULTRA KILL detected for ${playerName} in match ${feat.matchId} (via feats)`);
-            const embed = this.messageFormatter.formatUltraKillNotification(
-              playerName, feat.heroId, feat.matchId, 0, 0, 0, false, 1, null
-            );
-            await this.discordBot.sendNotification(null, embed);
-          } else if (feat.type === 'TRIPLE_KILL') {
-            logger.info(`💥 TRIPLE KILL detected for ${playerName} in match ${feat.matchId} (via feats)`);
-            const embed = this.messageFormatter.formatTripleKillNotification(
-              playerName, feat.heroId, feat.matchId, 0, 0, 0, false, 1, null
-            );
-            await this.discordBot.sendNotification(null, embed);
-          }
-          await new Promise(resolve => setTimeout(resolve, 500));
+    for (const [accountId, checks] of checksByAccount) {
+      const playerName = checks[0].playerName;
+      const matchIds = checks.map(c => c.matchId);
+
+      // Batch fetch STRATZ feats once per player
+      let stratzFeats = [];
+      try {
+        const feats = await this.stratzClient.getPlayerAchievements(accountId, 200);
+        stratzFeats = feats ? this.stratzClient.getMultiKillFeatsFromMatches(feats, matchIds) : [];
+      } catch (error) {
+        logger.debug(`STRATZ feats fetch failed for ${playerName}: ${error.message}`);
+      }
+
+      // Process each pending match
+      for (const check of checks) {
+        if (this.stateCache.isMultiKillDetected(check.matchId, accountId)) {
+          this.stateCache.removePendingMultiKillCheck(check.matchId, accountId);
+          continue;
         }
-        return; // Feats found, no need for kill event fallback
+
+        let resolved = false;
+
+        // Source 1: OpenDota multi_kills (direct, most reliable when parsed)
+        if (this.openDotaClient && !resolved) {
+          resolved = await this.checkMultiKillsViaOpenDota(check.matchId, accountId, playerName);
+        }
+
+        // Source 2: STRATZ feats (pre-calculated achievements)
+        if (!resolved) {
+          const matchFeats = stratzFeats.filter(f => f.matchId === check.matchId || f.matchId === parseInt(check.matchId));
+          if (matchFeats.length > 0) {
+            resolved = true;
+            await this.notifyMultiKillsFromFeats(matchFeats, accountId, playerName);
+          }
+        }
+
+        // Source 3: STRATZ kill events (only on final check as last resort)
+        if (!resolved && check.checkCount >= this.maxMultiKillChecks - 1) {
+          resolved = await this.checkMultiKillsViaKillEvents(check.matchId, accountId, playerName);
+        }
+
+        if (resolved) {
+          this.stateCache.markMultiKillDetected(check.matchId, accountId, playerName);
+          this.stateCache.removePendingMultiKillCheck(check.matchId, accountId);
+        } else if (check.checkCount >= this.maxMultiKillChecks) {
+          // Give up after max checks - mark as done to prevent infinite retries
+          logger.debug(`Max checks reached for match ${check.matchId} (${playerName}), giving up`);
+          this.stateCache.markMultiKillDetected(check.matchId, accountId, playerName);
+          this.stateCache.removePendingMultiKillCheck(check.matchId, accountId);
+        } else {
+          this.stateCache.incrementMultiKillCheckCount(check.matchId, accountId);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
 
-      // Fallback: check kill events for each match
-      for (const matchId of matchIds) {
-        await this.checkMultiKillsFromKillEvents(matchId, accountId, playerName);
-      }
-    } catch (error) {
-      // Feats failed, fall back to kill events
-      logger.warn(`Feats check failed for ${playerName}, using kill events: ${error.message}`);
-      for (const matchId of matchIds) {
-        await this.checkMultiKillsFromKillEvents(matchId, accountId, playerName);
-      }
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
   }
 
   /**
-   * Fallback: Check for multi-kills using kill event timestamp analysis
+   * Check multi-kills via OpenDota's parsed match multi_kills field
+   * Returns true if the match was parsed (regardless of whether multi-kills were found)
    */
-  async checkMultiKillsFromKillEvents(matchId, accountId, playerName) {
-    try {
-      if (this.stateCache.isMultiKillDetected(matchId, accountId)) return;
+  async checkMultiKillsViaOpenDota(matchId, accountId, playerName) {
+    if (!this.openDotaClient) return false;
 
+    try {
+      const matchData = await this.openDotaClient.getMatch(matchId);
+      if (!matchData) return false;
+
+      const result = this.openDotaClient.getMultiKillsForPlayer(matchData, accountId);
+      if (!result) return false; // Match not parsed yet
+
+      // Match is parsed - send notifications for any multi-kills found
+      if (result.rampages > 0) {
+        logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${matchId} (via OpenDota)`);
+        const embed = this.messageFormatter.formatRampageNotification(
+          playerName, result.heroId, matchId,
+          result.kills, result.deaths, result.assists, result.win, null
+        );
+        await this.discordBot.sendNotification(null, embed);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      if (result.ultraKills > 0) {
+        logger.info(`⚡ ULTRA KILL detected for ${playerName} in match ${matchId} (via OpenDota)`);
+        const embed = this.messageFormatter.formatUltraKillNotification(
+          playerName, result.heroId, matchId,
+          result.kills, result.deaths, result.assists, result.win, result.ultraKills, null
+        );
+        await this.discordBot.sendNotification(null, embed);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      if (result.tripleKills > 0) {
+        logger.info(`💥 TRIPLE KILL detected for ${playerName} in match ${matchId} (via OpenDota)`);
+        const embed = this.messageFormatter.formatTripleKillNotification(
+          playerName, result.heroId, matchId,
+          result.kills, result.deaths, result.assists, result.win, result.tripleKills, null
+        );
+        await this.discordBot.sendNotification(null, embed);
+      }
+
+      return true; // Match was parsed, check is resolved
+    } catch (error) {
+      logger.debug(`OpenDota check failed for match ${matchId}: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Send notifications from STRATZ feat data
+   */
+  async notifyMultiKillsFromFeats(feats, accountId, playerName) {
+    for (const feat of feats) {
+      if (feat.type === 'RAMPAGE') {
+        logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${feat.matchId} (via STRATZ feats)`);
+        const embed = this.messageFormatter.formatRampageNotification(
+          playerName, feat.heroId, feat.matchId, 0, 0, 0, false, null
+        );
+        await this.discordBot.sendNotification(null, embed);
+      } else if (feat.type === 'ULTRA_KILL') {
+        logger.info(`⚡ ULTRA KILL detected for ${playerName} in match ${feat.matchId} (via STRATZ feats)`);
+        const embed = this.messageFormatter.formatUltraKillNotification(
+          playerName, feat.heroId, feat.matchId, 0, 0, 0, false, 1, null
+        );
+        await this.discordBot.sendNotification(null, embed);
+      } else if (feat.type === 'TRIPLE_KILL') {
+        logger.info(`💥 TRIPLE KILL detected for ${playerName} in match ${feat.matchId} (via STRATZ feats)`);
+        const embed = this.messageFormatter.formatTripleKillNotification(
+          playerName, feat.heroId, feat.matchId, 0, 0, 0, false, 1, null
+        );
+        await this.discordBot.sendNotification(null, embed);
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+
+  /**
+   * Check multi-kills via STRATZ kill event timestamp analysis (last resort fallback)
+   * Returns true if kill event data was available (regardless of whether multi-kills found)
+   */
+  async checkMultiKillsViaKillEvents(matchId, accountId, playerName) {
+    try {
       const matchData = await this.stratzClient.getMatchWithKillEvents(matchId);
-      if (!matchData?.players) return;
+      if (!matchData?.players) return false;
 
       const accountIdNum = parseInt(accountId);
       const player = matchData.players.find(p => p.steamAccountId === accountIdNum);
-      if (!player?.stats?.killEvents) return;
+      if (!player?.stats?.killEvents || player.stats.killEvents.length === 0) return false;
 
       const multiKills = this.stratzClient.detectMultiKillsFromKillEvents(player.stats.killEvents);
-      this.stateCache.markMultiKillDetected(matchId, accountId, playerName);
-
       const win = player.isRadiant === matchData.didRadiantWin;
 
       if (multiKills.rampages > 0) {
-        logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${matchId} (via kill events)`);
+        logger.info(`🔥 RAMPAGE detected for ${playerName} in match ${matchId} (via STRATZ kill events)`);
         const embed = this.messageFormatter.formatRampageNotification(
           playerName, player.heroId, matchId,
           player.kills || 0, player.deaths || 0, player.assists || 0, win, matchData
@@ -244,7 +360,7 @@ export class PollingService {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
       if (multiKills.ultraKills > 0) {
-        logger.info(`⚡ ULTRA KILL detected for ${playerName} in match ${matchId} (via kill events)`);
+        logger.info(`⚡ ULTRA KILL detected for ${playerName} in match ${matchId} (via STRATZ kill events)`);
         const embed = this.messageFormatter.formatUltraKillNotification(
           playerName, player.heroId, matchId,
           player.kills || 0, player.deaths || 0, player.assists || 0, win, multiKills.ultraKills, matchData
@@ -253,15 +369,18 @@ export class PollingService {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
       if (multiKills.tripleKills > 0) {
-        logger.info(`💥 TRIPLE KILL detected for ${playerName} in match ${matchId} (via kill events)`);
+        logger.info(`💥 TRIPLE KILL detected for ${playerName} in match ${matchId} (via STRATZ kill events)`);
         const embed = this.messageFormatter.formatTripleKillNotification(
           playerName, player.heroId, matchId,
           player.kills || 0, player.deaths || 0, player.assists || 0, win, multiKills.tripleKills, matchData
         );
         await this.discordBot.sendNotification(null, embed);
       }
+
+      return true; // Kill event data was available
     } catch (error) {
-      logger.error(`Error checking kill events for match ${matchId}:`, error.message);
+      logger.debug(`STRATZ kill events check failed for match ${matchId}: ${error.message}`);
+      return false;
     }
   }
 
@@ -532,15 +651,31 @@ export class PollingService {
           // Get match IDs from recent matches
           const matchIds = recentMatches.map(m => m.id);
           
-          // Check feats for all multi-kills (rampages, ultra kills, triple kills)
+          // Check for multi-kills using STRATZ feats + OpenDota fallback
           try {
+            // Source 1: STRATZ feats
             const feats = await this.stratzClient.getPlayerAchievements(bestAccountId, 200);
             const multiKillFeats = this.stratzClient.getMultiKillFeatsFromMatches(feats, matchIds);
 
-            // Count each type
             summary.rampages = multiKillFeats.filter(f => f.type === 'RAMPAGE').length;
             summary.ultraKills = multiKillFeats.filter(f => f.type === 'ULTRA_KILL').length;
             summary.tripleKills = multiKillFeats.filter(f => f.type === 'TRIPLE_KILL').length;
+
+            // Source 2: OpenDota fallback for missed multi-kills
+            // Daily summary runs on previous day, so matches should be parsed by now
+            if (this.openDotaClient && (summary.rampages + summary.ultraKills + summary.tripleKills) === 0) {
+              for (const matchId of matchIds.slice(0, 10)) { // Check up to 10 matches
+                try {
+                  const odMatch = await this.openDotaClient.getMatch(matchId);
+                  const result = odMatch ? this.openDotaClient.getMultiKillsForPlayer(odMatch, bestAccountId) : null;
+                  if (result) {
+                    summary.rampages += result.rampages;
+                    summary.ultraKills += result.ultraKills;
+                    summary.tripleKills += result.tripleKills;
+                  }
+                } catch (e) { /* ignore individual match failures */ }
+              }
+            }
 
             // Collect rampages for separate notifications
             for (const feat of multiKillFeats.filter(f => f.type === 'RAMPAGE')) {
@@ -561,7 +696,7 @@ export class PollingService {
               }
             }
 
-            if (multiKillFeats.length > 0) {
+            if ((summary.rampages + summary.ultraKills + summary.tripleKills) > 0) {
               logger.info(`${friend.name} got ${summary.rampages} rampage(s), ${summary.ultraKills} ultra kill(s), ${summary.tripleKills} triple kill(s)!`);
             }
           } catch (error) {
