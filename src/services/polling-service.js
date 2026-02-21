@@ -23,7 +23,7 @@ export class PollingService {
     };
     this.isRunning = false;
     this.cronJob = null;
-    this.dailySummaryJob = null;
+    this.dailySummaryJobs = [];
     // Max re-checks for pending multi-kill detection (6 checks * 5 min = 30 min window)
     this.maxMultiKillChecks = 6;
   }
@@ -61,20 +61,22 @@ export class PollingService {
     const weekendMinute = this.dailySummaryConfig.weekendTime.minute;
     
     // Weekdays: Monday-Friday
-    cron.schedule(`${weekdayMinute} ${weekdayHour} * * 1-5`, async () => {
+    this.dailySummaryJobs.push(cron.schedule(`${weekdayMinute} ${weekdayHour} * * 1-5`, async () => {
+      logger.info('Daily summary cron triggered (weekday)');
       await this.sendDailySummary();
     }, {
       scheduled: true,
       timezone: 'Europe/London'
-    });
-    
+    }));
+
     // Weekends: Saturday-Sunday
-    cron.schedule(`${weekendMinute} ${weekendHour} * * 0,6`, async () => {
+    this.dailySummaryJobs.push(cron.schedule(`${weekendMinute} ${weekendHour} * * 0,6`, async () => {
+      logger.info('Daily summary cron triggered (weekend)');
       await this.sendDailySummary();
     }, {
       scheduled: true,
       timezone: 'Europe/London'
-    });
+    }));
     
     logger.info(`Daily summary scheduled: ${weekdayHour.toString().padStart(2, '0')}:${weekdayMinute.toString().padStart(2, '0')} UK time (Mon-Fri), ${weekendHour.toString().padStart(2, '0')}:${weekendMinute.toString().padStart(2, '0')} UK time (Sat-Sun)`);
   }
@@ -87,9 +89,11 @@ export class PollingService {
       this.cronJob.stop();
       this.cronJob = null;
     }
-    if (this.dailySummaryJob) {
-      this.dailySummaryJob.stop();
-      this.dailySummaryJob = null;
+    if (this.dailySummaryJobs && this.dailySummaryJobs.length > 0) {
+      for (const job of this.dailySummaryJobs) {
+        job.stop();
+      }
+      this.dailySummaryJobs = [];
     }
     this.isRunning = false;
     logger.info('Polling service stopped');
@@ -134,38 +138,38 @@ export class PollingService {
         : [{ name: 'You', ids: [this.accountId] }];
 
       for (const player of playersToCheck) {
-        const accountId = player.ids[0];
         const playerName = player.name;
 
-        try {
-          const matchesData = await this.stratzClient.getRecentMatches(accountId, 5);
+        // Check ALL accounts for this player (not just the first)
+        for (const accountId of player.ids) {
+          try {
+            const matchesData = await this.stratzClient.getRecentMatches(accountId, 5);
 
-          if (!matchesData || matchesData.length === 0) {
-            continue;
-          }
+            if (!matchesData || matchesData.length === 0) {
+              continue;
+            }
 
-          const processed = this.dataProcessor.processRecentMatches(matchesData, accountId);
-          const newMatches = this.dataProcessor.detectNewMatches(processed, accountId);
+            const processed = this.dataProcessor.processRecentMatches(matchesData, accountId);
+            const newMatches = this.dataProcessor.detectNewMatches(processed, accountId);
 
-          if (newMatches.length > 0) {
-            logger.info(`Found ${newMatches.length} new match(es) for ${playerName}`);
+            if (newMatches.length > 0) {
+              logger.info(`Found ${newMatches.length} new match(es) for ${playerName} (account ${accountId})`);
 
-            // Queue each new match for multi-kill checking
-            // These will be processed in checkPendingMultiKills() with retry logic
-            for (const match of newMatches) {
-              this.stateCache.addPendingMultiKillCheck(match.matchId, accountId, playerName);
+              // Queue each new match for multi-kill checking
+              for (const match of newMatches) {
+                this.stateCache.addPendingMultiKillCheck(match.matchId, accountId, playerName);
 
-              // Request OpenDota parse immediately (fire and forget)
-              // This ensures multi_kills data will be available on future checks
-              if (this.openDotaClient) {
-                this.openDotaClient.requestParse(match.matchId).catch(() => {});
+                // Request OpenDota parse immediately (fire and forget)
+                if (this.openDotaClient) {
+                  this.openDotaClient.requestParse(match.matchId).catch(() => {});
+                }
               }
             }
-          }
 
-          await new Promise(resolve => setTimeout(resolve, 200));
-        } catch (error) {
-          logger.warn(`Error checking matches for ${playerName}:`, error.message);
+            await new Promise(resolve => setTimeout(resolve, 200));
+          } catch (error) {
+            logger.warn(`Error checking matches for ${playerName} (account ${accountId}):`, error.message);
+          }
         }
       }
     } catch (error) {
@@ -206,6 +210,10 @@ export class PollingService {
       try {
         const feats = await this.stratzClient.getPlayerAchievements(accountId, 200);
         stratzFeats = feats ? this.stratzClient.getMultiKillFeatsFromMatches(feats, matchIds) : [];
+        if (stratzFeats.length > 0) {
+          logger.info(`STRATZ feats found for ${playerName}: ${stratzFeats.length} multi-kill(s) in pending matches`);
+          stratzFeats.forEach(f => logger.debug(`  Feat: type=${f.type}, matchId=${f.matchId}, heroId=${f.heroId}`));
+        }
       } catch (error) {
         logger.debug(`STRATZ feats fetch failed for ${playerName}: ${error.message}`);
       }
@@ -425,41 +433,51 @@ export class PollingService {
         : [{ name: 'You', ids: [this.accountId] }];
 
       for (const player of playersToCheck) {
-        const accountId = player.ids[0];
         const playerName = player.name;
 
         try {
-          // Get current rank from STRATZ
-          const rankData = await this.stratzClient.getPlayerRank(accountId);
-          
-          if (!rankData || !rankData.rank) {
+          // Check ALL accounts and find the highest/most recent rank
+          let bestRankData = null;
+
+          for (const accountId of player.ids) {
+            try {
+              const rankData = await this.stratzClient.getPlayerRank(accountId);
+              if (rankData && rankData.rank) {
+                if (!bestRankData || rankData.rank > bestRankData.rank) {
+                  bestRankData = rankData;
+                }
+              }
+              await new Promise(resolve => setTimeout(resolve, 200));
+            } catch (error) {
+              logger.warn(`Error checking rank for ${playerName} (account ${accountId}):`, error.message);
+            }
+          }
+
+          if (!bestRankData || !bestRankData.rank) {
             continue;
           }
 
-          // Check if rank changed
+          // Use player name as key to avoid duplicate notifications across accounts
+          const rankKey = `player_${playerName}`;
           const oldRankData = this.stateCache.updatePlayerRank(
-            accountId, 
-            rankData.rank, 
-            rankData.leaderboardRank
+            rankKey,
+            bestRankData.rank,
+            bestRankData.leaderboardRank
           );
 
           if (oldRankData && oldRankData.oldRank !== null) {
-            // Rank changed - send notification
-            logger.info(`📈 Rank change detected for ${playerName}: ${oldRankData.oldRank} -> ${rankData.rank}`);
-            
+            logger.info(`Rank change detected for ${playerName}: ${oldRankData.oldRank} -> ${bestRankData.rank}`);
+
             const embed = this.messageFormatter.formatRankChangeNotification(
               playerName,
               oldRankData.oldRank,
-              rankData.rank,
+              bestRankData.rank,
               oldRankData.oldLeaderboardRank,
-              rankData.leaderboardRank
+              bestRankData.leaderboardRank
             );
-            
+
             await this.discordBot.sendNotification(null, embed);
           }
-
-          // Small delay between players
-          await new Promise(resolve => setTimeout(resolve, 200));
         } catch (error) {
           logger.warn(`Error checking rank for ${playerName}:`, error.message);
         }
@@ -539,8 +557,12 @@ export class PollingService {
     const endOfYesterday = new Date(startOfYesterday);
     endOfYesterday.setTime(endOfYesterday.getTime() + (24 * 60 * 60 * 1000) - 1000);
     
-    // Format date as "11-Jan-2026"
-    const dateString = this.formatDateString(ukDay - 1, ukMonth, ukYear);
+    // Format date from the correctly-rolled-back yesterdayUK date
+    const dateString = this.formatDateString(
+      yesterdayUK.getUTCDate(),
+      yesterdayUK.getUTCMonth(),
+      yesterdayUK.getUTCFullYear()
+    );
     
     return {
       startTimestamp: Math.floor(startOfYesterday.getTime() / 1000),
@@ -758,6 +780,18 @@ export class PollingService {
       await this.stateCache.save();
     } catch (error) {
       logger.error('Error sending daily summary:', error);
+      // Notify Discord that the daily summary failed
+      try {
+        const { EmbedBuilder } = await import('discord.js');
+        const errorEmbed = new EmbedBuilder()
+          .setTitle('Daily Summary Failed')
+          .setDescription(`The automated daily summary failed to generate.\n\n**Error:** ${error.message}`)
+          .setColor(0xFF0000)
+          .setTimestamp();
+        await this.discordBot.sendNotification(null, errorEmbed);
+      } catch (notifyError) {
+        logger.error('Failed to send error notification:', notifyError.message);
+      }
     }
   }
 }

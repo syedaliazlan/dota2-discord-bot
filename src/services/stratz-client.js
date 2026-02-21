@@ -776,7 +776,19 @@ export class StratzClient {
     `;
 
     const data = await this.query(query, { steamAccountId: parseInt(accountId), take });
-    return data?.player?.feats || [];
+    const feats = data?.player?.feats || [];
+
+    // Log feat types for debugging multi-kill detection
+    if (feats.length > 0) {
+      const typeCounts = {};
+      feats.forEach(f => {
+        const key = `${f.type}(${typeof f.type})`;
+        typeCounts[key] = (typeCounts[key] || 0) + 1;
+      });
+      logger.debug(`Feats for ${accountId}: ${feats.length} total, types: ${JSON.stringify(typeCounts)}`);
+    }
+
+    return feats;
   }
 
   /**
@@ -785,14 +797,15 @@ export class StratzClient {
    */
   getMultiKillsFromFeats(feats, matchIds) {
     const result = { tripleKills: 0, ultraKills: 0, rampages: 0 };
-    
+
     if (!feats || !matchIds || matchIds.length === 0) return result;
-    
+
     const matchIdSet = new Set(matchIds.map(id => parseInt(id)));
-    
+
     feats.forEach(feat => {
       if (matchIdSet.has(feat.matchId)) {
-        switch (feat.type) {
+        const normalizedType = this.normalizeFeatType(feat.type);
+        switch (normalizedType) {
           case 'RAMPAGE':
             result.rampages++;
             break;
@@ -805,7 +818,7 @@ export class StratzClient {
         }
       }
     });
-    
+
     return result;
   }
 
@@ -817,9 +830,11 @@ export class StratzClient {
 
     const matchIdSet = new Set(matchIds.map(id => parseInt(id)));
 
-    return feats.filter(feat =>
-      feat.type === 'RAMPAGE' && matchIdSet.has(feat.matchId)
-    );
+    return feats
+      .map(feat => ({ ...feat, type: this.normalizeFeatType(feat.type) }))
+      .filter(feat =>
+        feat.type === 'RAMPAGE' && matchIdSet.has(feat.matchId)
+      );
   }
 
   /**
@@ -831,9 +846,55 @@ export class StratzClient {
     const matchIdSet = new Set(matchIds.map(id => parseInt(id)));
     const multiKillTypes = new Set(['TRIPLE_KILL', 'ULTRA_KILL', 'RAMPAGE']);
 
-    return feats.filter(feat =>
-      multiKillTypes.has(feat.type) && matchIdSet.has(feat.matchId)
-    );
+    return feats
+      .map(feat => ({ ...feat, type: this.normalizeFeatType(feat.type) }))
+      .filter(feat =>
+        multiKillTypes.has(feat.type) && matchIdSet.has(feat.matchId)
+      );
+  }
+
+  // ==================== Feat Type Normalization ====================
+
+  /**
+   * Normalize STRATZ feat type to standard string format
+   * Handles string enum values, numeric IDs, and case variations
+   */
+  normalizeFeatType(type) {
+    if (type == null) return 'UNKNOWN';
+
+    // If it's a string, normalize casing and underscores
+    if (typeof type === 'string') {
+      const upper = type.toUpperCase().replace(/ /g, '_');
+      // Direct match
+      const known = new Set([
+        'RAMPAGE', 'ULTRA_KILL', 'TRIPLE_KILL', 'GODLIKE',
+        'COURIER_KILL', 'MEGA_CREEPS', 'DIVINE_RAPIER', 'FIRST_BLOOD',
+        'BEYOND_GODLIKE'
+      ]);
+      if (known.has(upper)) return upper;
+      // Handle no-underscore variants
+      if (upper === 'TRIPLEKILL' || upper === 'TRIPLE') return 'TRIPLE_KILL';
+      if (upper === 'ULTRAKILL' || upper === 'ULTRA') return 'ULTRA_KILL';
+      return upper;
+    }
+
+    // If it's a number, map known STRATZ FeatType enum IDs
+    if (typeof type === 'number') {
+      const numericMap = {
+        0: 'FIRST_BLOOD',
+        1: 'RAMPAGE',
+        2: 'ULTRA_KILL',
+        3: 'TRIPLE_KILL',
+        4: 'GODLIKE',
+        5: 'COURIER_KILL',
+        6: 'MEGA_CREEPS',
+        7: 'BEYOND_GODLIKE',
+        8: 'DIVINE_RAPIER',
+      };
+      return numericMap[type] || `UNKNOWN_${type}`;
+    }
+
+    return `UNKNOWN_${type}`;
   }
 
   // ==================== Rampage Detection ====================

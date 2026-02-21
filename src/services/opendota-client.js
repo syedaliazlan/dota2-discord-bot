@@ -130,10 +130,16 @@ export class OpenDotaClient {
   getMultiKillsForPlayer(matchData, accountId) {
     if (!matchData?.players) return null;
 
-    const accountIdNum = parseInt(accountId);
-    const player = matchData.players.find(p => p.account_id === accountIdNum);
+    const accountIdNum = parseInt(accountId, 10);
+    const player = matchData.players.find(p => {
+      const pId = typeof p.account_id === 'string' ? parseInt(p.account_id, 10) : p.account_id;
+      return pId === accountIdNum;
+    });
 
-    if (!player) return null;
+    if (!player) {
+      logger.debug(`Player ${accountId} not found in OpenDota match. Available IDs: ${matchData.players?.map(p => p.account_id).join(', ')}`);
+      return null;
+    }
 
     // Check if match is parsed
     const isParsed = this.isMatchParsed(matchData);
@@ -157,6 +163,25 @@ export class OpenDotaClient {
       assists: player.assists || 0,
       win: player.player_slot < 128 ? matchData.radiant_win : !matchData.radiant_win
     };
+  }
+
+  /**
+   * Get player rank from OpenDota as fallback for stale STRATZ data
+   */
+  async getPlayerRank(accountId) {
+    try {
+      logger.debug(`OpenDota: Fetching rank for account ${accountId}`);
+      const data = await this.request('get', `/players/${accountId}`);
+      if (!data) return null;
+
+      return {
+        rank: data.rank_tier,
+        leaderboardRank: data.leaderboard_rank || null
+      };
+    } catch (error) {
+      logger.debug(`OpenDota rank fetch failed for ${accountId}: ${error.message}`);
+      return null;
+    }
   }
 
   /**

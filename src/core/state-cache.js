@@ -33,7 +33,9 @@ export class StateCache {
       await fs.mkdir(dir, { recursive: true });
       
       const data = await fs.readFile(this.cacheFile, 'utf-8');
-      this.cache = JSON.parse(data);
+      const loaded = JSON.parse(data);
+      // Merge loaded data with defaults to preserve new fields from code updates
+      this.cache = { ...this.cache, ...loaded };
       logger.info('State cache loaded from file');
     } catch (error) {
       if (error.code === 'ENOENT') {

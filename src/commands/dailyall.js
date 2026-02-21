@@ -40,9 +40,9 @@ export const dailyallCommand = {
     const endOfYesterday = new Date(startOfYesterday);
     endOfYesterday.setTime(endOfYesterday.getTime() + (24 * 60 * 60 * 1000) - 1000);
     
-    // Format date as "11-Jan-2026"
+    // Format date from the correctly-rolled-back yesterdayUK date
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const dateString = `${ukDay - 1}-${months[ukMonth]}-${ukYear}`;
+    const dateString = `${yesterdayUK.getUTCDate()}-${months[yesterdayUK.getUTCMonth()]}-${yesterdayUK.getUTCFullYear()}`;
     
     return {
       startTimestamp: Math.floor(startOfYesterday.getTime() / 1000),
@@ -138,14 +138,16 @@ export const dailyallCommand = {
           // Get match IDs from recent matches
           const matchIds = recentMatches.map(m => m.id);
           
-          // Check feats for rampages
+          // Check feats for all multi-kills (rampages, ultra kills, triple kills)
           try {
             const feats = await stratzClient.getPlayerAchievements(bestAccountId, 200);
-            const rampageFeats = stratzClient.getRampageFeatsFromMatches(feats, matchIds);
-            
-            summary.rampages = rampageFeats.length;
-            
-            for (const feat of rampageFeats) {
+            const multiKillFeats = stratzClient.getMultiKillFeatsFromMatches(feats, matchIds);
+
+            summary.rampages = multiKillFeats.filter(f => f.type === 'RAMPAGE').length;
+            summary.ultraKills = multiKillFeats.filter(f => f.type === 'ULTRA_KILL').length;
+            summary.tripleKills = multiKillFeats.filter(f => f.type === 'TRIPLE_KILL').length;
+
+            for (const feat of multiKillFeats.filter(f => f.type === 'RAMPAGE')) {
               const matchData = recentMatches.find(m => m.id === feat.matchId);
               if (matchData) {
                 const player = matchData.players?.[0];
@@ -161,9 +163,9 @@ export const dailyallCommand = {
                 });
               }
             }
-            
-            if (rampageFeats.length > 0) {
-              logger.info(`${friend.name} got ${rampageFeats.length} rampage(s)!`);
+
+            if ((summary.rampages + summary.ultraKills + summary.tripleKills) > 0) {
+              logger.info(`${friend.name} got ${summary.rampages} rampage(s), ${summary.ultraKills} ultra kill(s), ${summary.tripleKills} triple kill(s)!`);
             }
           } catch (error) {
             logger.warn(`Error fetching feats for ${friend.name}:`, error.message);

@@ -426,11 +426,27 @@ export class MessageFormatter {
       }
     ];
 
-    // Add rampage stats if any
+    // Add multi-kill stats if any
     if (summary.rampages > 0) {
       fields.push({
         name: '🔥 Rampages',
         value: `**${summary.rampages}** Rampage${summary.rampages > 1 ? 's' : ''}`,
+        inline: true
+      });
+    }
+
+    if (summary.ultraKills > 0) {
+      fields.push({
+        name: '⚡ Ultra Kills',
+        value: `**${summary.ultraKills}** Ultra Kill${summary.ultraKills > 1 ? 's' : ''}`,
+        inline: true
+      });
+    }
+
+    if (summary.tripleKills > 0) {
+      fields.push({
+        name: '💥 Triple Kills',
+        value: `**${summary.tripleKills}** Triple Kill${summary.tripleKills > 1 ? 's' : ''}`,
         inline: true
       });
     }
@@ -502,9 +518,19 @@ export class MessageFormatter {
         : '';
 
       // Multi-kill stats line
-      let rampageLine = '';
+      let multiKillLine = '';
+      const multiKillParts = [];
       if (summary.rampages > 0) {
-        rampageLine = `\n🔥 **${summary.rampages}** Rampage${summary.rampages > 1 ? 's' : ''}`;
+        multiKillParts.push(`🔥 **${summary.rampages}** Rampage${summary.rampages > 1 ? 's' : ''}`);
+      }
+      if (summary.ultraKills > 0) {
+        multiKillParts.push(`⚡ **${summary.ultraKills}** Ultra Kill${summary.ultraKills > 1 ? 's' : ''}`);
+      }
+      if (summary.tripleKills > 0) {
+        multiKillParts.push(`💥 **${summary.tripleKills}** Triple Kill${summary.tripleKills > 1 ? 's' : ''}`);
+      }
+      if (multiKillParts.length > 0) {
+        multiKillLine = '\n' + multiKillParts.join(' | ');
       }
 
       // Use larger, more prominent player icon and name
@@ -513,7 +539,7 @@ export class MessageFormatter {
         name: `🎮  ${name.toUpperCase()}`,
         value: `\n📊 **${summary.totalMatches}** matches | ${summary.wins}W-${summary.losses}L | ${winRateEmoji} **${summary.winRate}%** WR\n` +
                `⚔️ Avg KDA: **${summary.avgKDA}** | Total: ${summary.totalKills}/${summary.totalDeaths}/${summary.totalAssists}\n` +
-               `🎯 Most Played: **${mostPlayedHero}**${rampageLine}${bestMatchInfo}`,
+               `🎯 Most Played: **${mostPlayedHero}**${multiKillLine}${bestMatchInfo}`,
         inline: false
       };
     });

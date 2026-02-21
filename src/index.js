@@ -58,6 +58,26 @@ async function main() {
       logger.warn('The bot will start but API commands may not work until this is fixed.');
     }
     
+    // Diagnostic: check STRATZ feat type format (crucial for multi-kill detection)
+    logger.info('Running STRATZ feat type diagnostic...');
+    try {
+      const sampleFeats = await stratzClient.getPlayerAchievements(config.steam.accountId, 10);
+      if (sampleFeats && sampleFeats.length > 0) {
+        const sample = sampleFeats[0];
+        logger.info(`STRATZ feat sample: type=${JSON.stringify(sample.type)} (${typeof sample.type}), matchId=${sample.matchId}, heroId=${sample.heroId}`);
+        const typeCounts = {};
+        sampleFeats.forEach(f => {
+          const key = `${f.type}(${typeof f.type})`;
+          typeCounts[key] = (typeCounts[key] || 0) + 1;
+        });
+        logger.info(`STRATZ feat types found: ${JSON.stringify(typeCounts)}`);
+      } else {
+        logger.warn('No feats returned for main account - feat type format unknown');
+      }
+    } catch (error) {
+      logger.warn(`Feat diagnostic failed: ${error.message}`);
+    }
+
     // Load heroes from STRATZ API
     logger.info('Loading heroes from STRATZ API...');
     const heroMap = await loadHeroesFromAPI(stratzClient);
