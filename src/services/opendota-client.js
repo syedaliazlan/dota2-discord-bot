@@ -174,6 +174,68 @@ export class OpenDotaClient {
   }
 
   /**
+   * Get recent matches for a player from OpenDota
+   * Returns array of match objects with: match_id, start_time, hero_id, kills, deaths, assists, etc.
+   * OpenDota's /recentMatches returns the last 20 matches.
+   * For more matches, use /matches with date filter.
+   */
+  async getRecentMatches(accountId, sinceTimestamp = null) {
+    try {
+      logger.debug(`OpenDota: Fetching recent matches for account ${accountId}`);
+
+      // Use /players/{id}/matches with date filter for time-based queries
+      if (sinceTimestamp) {
+        const data = await this.request('get', `/players/${accountId}/matches?date=${Math.ceil((Date.now() / 1000 - sinceTimestamp) / 86400)}&significant=0`);
+        const matches = data || [];
+        logger.info(`OpenDota: getRecentMatches(${accountId}): returned ${matches.length} match(es) since ${new Date(sinceTimestamp * 1000).toISOString()}`);
+        return matches;
+      }
+
+      // Default: /recentMatches (last 20)
+      const data = await this.request('get', `/players/${accountId}/recentMatches`);
+      const matches = data || [];
+      logger.info(`OpenDota: getRecentMatches(${accountId}): returned ${matches.length} match(es)`);
+      return matches;
+    } catch (error) {
+      logger.warn(`OpenDota getRecentMatches failed for ${accountId}: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Convert OpenDota match list format to STRATZ-compatible format
+   * so it can be used with the existing data processor
+   */
+  convertToStratzFormat(matches, accountId) {
+    const accountIdNum = parseInt(accountId, 10);
+    return matches.map(m => {
+      const isRadiant = m.player_slot < 128;
+      return {
+        id: m.match_id,
+        didRadiantWin: m.radiant_win,
+        durationSeconds: m.duration,
+        startDateTime: m.start_time,
+        gameMode: m.game_mode,
+        lobbyType: m.lobby_type,
+        players: [{
+          steamAccountId: accountIdNum,
+          heroId: m.hero_id,
+          isRadiant: isRadiant,
+          kills: m.kills || 0,
+          deaths: m.deaths || 0,
+          assists: m.assists || 0,
+          goldPerMinute: m.gold_per_min || 0,
+          experiencePerMinute: m.xp_per_min || 0,
+          numLastHits: m.last_hits || 0,
+          numDenies: m.denies || 0,
+          imp: null,
+          award: null
+        }]
+      };
+    });
+  }
+
+  /**
    * Get player rank from OpenDota as fallback for stale STRATZ data
    */
   async getPlayerRank(accountId) {

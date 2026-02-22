@@ -585,45 +585,37 @@ export class PollingService {
           let bestAccountId = friend.ids[0];
           let recentMatches = [];
 
-          // For players with multiple IDs, check all accounts to find matches
-          if (friend.ids.length > 1 && this.friendsManager) {
-            let bestMatchCount = 0;
-            let bestAccountMatches = [];
+          // Use OpenDota as primary source for match discovery (more up-to-date than STRATZ)
+          // Fall back to STRATZ if OpenDota is unavailable
+          for (const accountId of friend.ids) {
+            try {
+              let accountMatches = [];
 
-            logger.debug(`${friend.name}: multi-account player, checking ${friend.ids.length} accounts`);
-            for (const accountId of friend.ids) {
-              try {
-                const matchesData = await this.stratzClient.getPlayerMatchesSince(accountId, startTimestamp, 50);
-
-                const filteredMatches = matchesData.filter(m =>
-                  m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
-                );
-
-                logger.debug(`${friend.name}: account ${accountId} -> ${matchesData.length} since start, ${filteredMatches.length} in day range`);
-
-                if (filteredMatches.length > bestMatchCount) {
-                  bestMatchCount = filteredMatches.length;
-                  bestAccountId = accountId;
-                  bestAccountMatches = filteredMatches;
-                }
-
-                await new Promise(resolve => setTimeout(resolve, 100));
-              } catch (error) {
-                logger.warn(`Error checking account ${accountId} for ${friend.name}: ${error.message}`);
+              if (this.openDotaClient) {
+                // OpenDota: get matches and convert to STRATZ format
+                const odMatches = await this.openDotaClient.getRecentMatches(accountId, startTimestamp);
+                const filtered = odMatches.filter(m => m.start_time >= startTimestamp && m.start_time <= endTimestamp);
+                accountMatches = this.openDotaClient.convertToStratzFormat(filtered, accountId);
+                logger.debug(`${friend.name}: account ${accountId} -> OpenDota returned ${odMatches.length}, ${accountMatches.length} in range`);
+              } else {
+                // STRATZ fallback
+                const stratzMatches = await this.stratzClient.getPlayerMatchesSince(accountId, startTimestamp, 50);
+                accountMatches = stratzMatches.filter(m => m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp);
+                logger.debug(`${friend.name}: account ${accountId} -> STRATZ returned ${stratzMatches.length}, ${accountMatches.length} in range`);
               }
-            }
 
-            recentMatches = bestAccountMatches;
-            logger.debug(`${friend.name}: best account=${bestAccountId} with ${recentMatches.length} matches`);
-          } else {
-            // Single account - use time-based query
-            logger.debug(`${friend.name}: single account ${bestAccountId}, fetching matches`);
-            const matchesData = await this.stratzClient.getPlayerMatchesSince(bestAccountId, startTimestamp, 50);
-            recentMatches = matchesData.filter(m =>
-              m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
-            );
-            logger.debug(`${friend.name}: ${matchesData.length} since start, ${recentMatches.length} in day range`);
+              if (accountMatches.length > recentMatches.length) {
+                recentMatches = accountMatches;
+                bestAccountId = accountId;
+              }
+
+              await new Promise(resolve => setTimeout(resolve, 100));
+            } catch (error) {
+              logger.warn(`Error checking account ${accountId} for ${friend.name}: ${error.message}`);
+            }
           }
+
+          logger.debug(`${friend.name}: best account=${bestAccountId} with ${recentMatches.length} matches`);
 
           // Skip if no matches
           if (recentMatches.length === 0) {

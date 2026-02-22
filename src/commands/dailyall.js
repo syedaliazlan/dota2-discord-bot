@@ -27,7 +27,7 @@ export const dailyallCommand = {
     };
   },
 
-  async execute(interaction, stratzClient, dataProcessor, messageFormatter, friendsManager) {
+  async execute(interaction, stratzClient, dataProcessor, messageFormatter, friendsManager, openDotaClient = null) {
     try {
       await interaction.deferReply();
     } catch (error) {
@@ -69,43 +69,34 @@ export const dailyallCommand = {
           let bestAccountId = friend.ids[0];
           let recentMatches = [];
 
-          if (friend.ids.length > 1) {
-            let bestMatchCount = 0;
-            let bestAccountMatches = [];
-
-            for (const accountId of friend.ids) {
-              try {
-                const matchesData = await stratzClient.getPlayerMatchesSince(accountId, startTimestamp, 50);
-                const filteredMatches = matchesData.filter(m =>
-                  m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
-                );
-
-                logger.debug(`/dailyall: ${friend.name} account ${accountId} -> ${matchesData.length} since start, ${filteredMatches.length} in range`);
-
-                if (filteredMatches.length > bestMatchCount) {
-                  bestMatchCount = filteredMatches.length;
-                  bestAccountId = accountId;
-                  bestAccountMatches = filteredMatches;
-                }
-
-                await new Promise(resolve => setTimeout(resolve, 100));
-              } catch (error) {
-                logger.warn(`/dailyall: Error checking account ${accountId} for ${friend.name}: ${error.message}`);
-              }
-            }
-
-            recentMatches = bestAccountMatches;
-          } else {
+          // Use OpenDota as primary source (more up-to-date than STRATZ), fall back to STRATZ
+          for (const accountId of friend.ids) {
             try {
-              const matchesData = await stratzClient.getPlayerMatchesSince(bestAccountId, startTimestamp, 50);
-              recentMatches = matchesData.filter(m =>
-                m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
-              );
-              logger.debug(`/dailyall: ${friend.name} account ${bestAccountId} -> ${matchesData.length} since start, ${recentMatches.length} in range`);
+              let accountMatches = [];
+
+              if (openDotaClient) {
+                const odMatches = await openDotaClient.getRecentMatches(accountId, startTimestamp);
+                const filtered = odMatches.filter(m => m.start_time >= startTimestamp && m.start_time <= endTimestamp);
+                accountMatches = openDotaClient.convertToStratzFormat(filtered, accountId);
+                logger.debug(`/dailyall: ${friend.name} account ${accountId} -> OpenDota returned ${odMatches.length}, ${accountMatches.length} in range`);
+              } else {
+                const stratzMatches = await stratzClient.getPlayerMatchesSince(accountId, startTimestamp, 50);
+                accountMatches = stratzMatches.filter(m => m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp);
+                logger.debug(`/dailyall: ${friend.name} account ${accountId} -> STRATZ returned ${stratzMatches.length}, ${accountMatches.length} in range`);
+              }
+
+              if (accountMatches.length > recentMatches.length) {
+                recentMatches = accountMatches;
+                bestAccountId = accountId;
+              }
+
+              await new Promise(resolve => setTimeout(resolve, 100));
             } catch (error) {
-              logger.warn(`/dailyall: Error fetching matches for ${friend.name}: ${error.message}`);
+              logger.warn(`/dailyall: Error checking account ${accountId} for ${friend.name}: ${error.message}`);
             }
           }
+
+          logger.debug(`/dailyall: ${friend.name}: best account=${bestAccountId} with ${recentMatches.length} matches`);
 
           if (recentMatches.length === 0) {
             logger.info(`/dailyall: ${friend.name}: NO MATCHES on ${dateString} - skipping`);

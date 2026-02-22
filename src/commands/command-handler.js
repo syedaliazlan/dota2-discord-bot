@@ -19,7 +19,7 @@ import { logger } from '../utils/logger.js';
  * Updated to use STRATZ API
  */
 export class CommandHandler {
-  constructor(discordBot, stratzClient, dataProcessor, messageFormatter, accountId, friendsManager = null, heroMap = null) {
+  constructor(discordBot, stratzClient, dataProcessor, messageFormatter, accountId, friendsManager = null, heroMap = null, openDotaClient = null) {
     this.discordBot = discordBot;
     this.stratzClient = stratzClient;
     this.dataProcessor = dataProcessor;
@@ -27,6 +27,7 @@ export class CommandHandler {
     this.accountId = accountId;
     this.friendsManager = friendsManager;
     this.heroMap = heroMap;
+    this.openDotaClient = openDotaClient;
 
     this.setupCommands();
     this.setupInteractionHandler();
@@ -93,7 +94,7 @@ export class CommandHandler {
         } else if (interaction.commandName === 'listfriends') {
           await command.execute(interaction, this.friendsManager);
         } else if (interaction.commandName === 'dailyall') {
-          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.friendsManager);
+          await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.friendsManager, this.openDotaClient);
         } else if (interaction.commandName === 'rampage') {
           await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.friendsManager, this.heroMap);
         } else if (interaction.commandName === 'meta') {

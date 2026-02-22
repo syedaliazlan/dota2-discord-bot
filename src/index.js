@@ -109,7 +109,8 @@ async function main() {
       messageFormatter,
       config.steam.accountId,
       friendsManager,
-      heroMap
+      heroMap,
+      openDotaClient
     );
 
     // Register slash commands with Discord
