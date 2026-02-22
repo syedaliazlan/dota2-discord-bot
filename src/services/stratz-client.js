@@ -337,11 +337,13 @@ export class StratzClient {
   async getPlayerMatchesSince(accountId, sinceTimestamp, limit = 50) {
     logger.debug(`Fetching matches since ${new Date(sinceTimestamp * 1000).toISOString()} for account ${accountId}`);
 
-    // Use STRATZ server-side startDateTime filter to get all matches in the time window
+    // Fetch a large batch of recent matches and filter client-side by timestamp
+    // Using take=200 to ensure we capture all matches within a 20-hour window
+    const fetchLimit = Math.max(limit, 200);
     const query = `
-      query GetMatchesSince($steamAccountId: Long!, $take: Int!, $startDateTime: Long) {
+      query GetMatchesSince($steamAccountId: Long!, $take: Int!) {
         player(steamAccountId: $steamAccountId) {
-          matches(request: { take: $take, startDateTime: $startDateTime }) {
+          matches(request: { take: $take }) {
             id
             didRadiantWin
             durationSeconds
@@ -369,17 +371,23 @@ export class StratzClient {
 
     const data = await this.query(query, {
       steamAccountId: parseInt(accountId),
-      take: limit,
-      startDateTime: sinceTimestamp
+      take: fetchLimit
     });
 
     const allMatches = data?.player?.matches || [];
-    logger.debug(`getPlayerMatchesSince(${accountId}, since=${new Date(sinceTimestamp * 1000).toISOString()}): API returned ${allMatches.length} matches`);
+    const filtered = allMatches.filter(match => match.startDateTime >= sinceTimestamp);
+
+    // Diagnostic logging: show what STRATZ returned vs what passed the filter
+    logger.info(`getPlayerMatchesSince(${accountId}): STRATZ returned ${allMatches.length} total matches, ${filtered.length} match(es) after ${new Date(sinceTimestamp * 1000).toISOString()}`);
     if (allMatches.length > 0) {
-      logger.debug(`  Match IDs: [${allMatches.map(m => m.id).join(', ')}]`);
-      logger.debug(`  Time range: ${new Date(allMatches[allMatches.length - 1].startDateTime * 1000).toISOString()} to ${new Date(allMatches[0].startDateTime * 1000).toISOString()}`);
+      const oldest = allMatches[allMatches.length - 1];
+      const newest = allMatches[0];
+      logger.debug(`  STRATZ range: ${new Date(oldest.startDateTime * 1000).toISOString()} to ${new Date(newest.startDateTime * 1000).toISOString()}`);
     }
-    return allMatches;
+    if (filtered.length > 0) {
+      logger.debug(`  Filtered match IDs: [${filtered.map(m => m.id).join(', ')}]`);
+    }
+    return filtered;
   }
 
   /**
