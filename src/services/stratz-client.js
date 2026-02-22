@@ -336,13 +336,12 @@ export class StratzClient {
    */
   async getPlayerMatchesSince(accountId, sinceTimestamp, limit = 50) {
     logger.debug(`Fetching matches since ${new Date(sinceTimestamp * 1000).toISOString()} for account ${accountId}`);
-    
-    // Fetch more matches than needed, then filter by timestamp
-    // This is more reliable than using startDateTime in the GraphQL query
+
+    // Use STRATZ server-side startDateTime filter to get all matches in the time window
     const query = `
-      query GetMatchesSince($steamAccountId: Long!, $take: Int!) {
+      query GetMatchesSince($steamAccountId: Long!, $take: Int!, $startDateTime: Long) {
         player(steamAccountId: $steamAccountId) {
-          matches(request: { take: $take }) {
+          matches(request: { take: $take, startDateTime: $startDateTime }) {
             id
             didRadiantWin
             durationSeconds
@@ -370,17 +369,17 @@ export class StratzClient {
 
     const data = await this.query(query, {
       steamAccountId: parseInt(accountId),
-      take: limit
+      take: limit,
+      startDateTime: sinceTimestamp
     });
 
     const allMatches = data?.player?.matches || [];
-    const filtered = allMatches.filter(match => match.startDateTime >= sinceTimestamp);
-    logger.debug(`getPlayerMatchesSince(${accountId}, since=${new Date(sinceTimestamp * 1000).toISOString()}): API returned ${allMatches.length} matches, ${filtered.length} after filter`);
-    if (filtered.length > 0) {
-      logger.debug(`  Match IDs: [${filtered.map(m => m.id).join(', ')}]`);
-      logger.debug(`  Time range: ${new Date(filtered[filtered.length - 1].startDateTime * 1000).toISOString()} to ${new Date(filtered[0].startDateTime * 1000).toISOString()}`);
+    logger.debug(`getPlayerMatchesSince(${accountId}, since=${new Date(sinceTimestamp * 1000).toISOString()}): API returned ${allMatches.length} matches`);
+    if (allMatches.length > 0) {
+      logger.debug(`  Match IDs: [${allMatches.map(m => m.id).join(', ')}]`);
+      logger.debug(`  Time range: ${new Date(allMatches[allMatches.length - 1].startDateTime * 1000).toISOString()} to ${new Date(allMatches[0].startDateTime * 1000).toISOString()}`);
     }
-    return filtered;
+    return allMatches;
   }
 
   /**
