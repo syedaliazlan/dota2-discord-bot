@@ -94,21 +94,24 @@ export class DiscordBot {
     try {
       const channel = this.getNotificationChannel();
       if (!channel) {
-        logger.error(`Channel ${this.channelId} not found`);
+        logger.error(`sendNotification: Channel ${this.channelId} not found`);
         return false;
       }
 
       const options = {};
       if (embed) {
         options.embeds = [embed];
+        logger.debug(`sendNotification: sending embed titled "${embed.data?.title || 'untitled'}" to channel ${this.channelId}`);
       } else {
         options.content = content;
+        logger.debug(`sendNotification: sending text message (${content?.length || 0} chars) to channel ${this.channelId}`);
       }
 
       await channel.send(options);
+      logger.debug('sendNotification: message sent successfully');
       return true;
     } catch (error) {
-      logger.error('Failed to send notification:', error.message);
+      logger.error(`sendNotification: FAILED - ${error.message}`);
       return false;
     }
   }

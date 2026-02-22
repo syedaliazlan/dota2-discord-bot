@@ -104,23 +104,16 @@ export class PollingService {
    */
   async checkForUpdates() {
     try {
-      // Check for new matches (adds to pending multi-kill checks)
+      logger.debug('=== Poll cycle starting ===');
+
       await this.checkNewMatches();
-
-      // Process pending multi-kill checks (retries across multiple poll cycles)
       await this.checkPendingMultiKills();
-
-      // Check for stat changes
       await this.checkStatChanges();
-
-      // Check for rank changes
       await this.checkRankChanges();
 
-      // Clean up old pending checks
       this.stateCache.cleanupPendingMultiKillChecks();
-
-      // Save cache after checks
       await this.stateCache.save();
+      logger.debug('=== Poll cycle complete ===');
     } catch (error) {
       logger.error('Error during update check:', error);
     }
@@ -137,29 +130,33 @@ export class PollingService {
         ? this.friendsManager.getAllFriends()
         : [{ name: 'You', ids: [this.accountId] }];
 
+      logger.debug(`checkNewMatches: checking ${playersToCheck.length} player(s)`);
+
       for (const player of playersToCheck) {
         const playerName = player.name;
 
         // Check ALL accounts for this player (not just the first)
         for (const accountId of player.ids) {
           try {
+            logger.debug(`checkNewMatches: fetching for ${playerName} (account ${accountId})`);
             const matchesData = await this.stratzClient.getRecentMatches(accountId, 5);
 
             if (!matchesData || matchesData.length === 0) {
+              logger.debug(`checkNewMatches: no matches returned for ${playerName} (account ${accountId})`);
               continue;
             }
 
             const processed = this.dataProcessor.processRecentMatches(matchesData, accountId);
             const newMatches = this.dataProcessor.detectNewMatches(processed, accountId);
 
-            if (newMatches.length > 0) {
-              logger.info(`Found ${newMatches.length} new match(es) for ${playerName} (account ${accountId})`);
+            logger.debug(`checkNewMatches: ${playerName} (${accountId}): ${matchesData.length} fetched, ${processed.length} processed, ${newMatches.length} new`);
 
-              // Queue each new match for multi-kill checking
+            if (newMatches.length > 0) {
+              logger.info(`Found ${newMatches.length} new match(es) for ${playerName} (account ${accountId}): [${newMatches.map(m => m.matchId).join(', ')}]`);
+
               for (const match of newMatches) {
                 this.stateCache.addPendingMultiKillCheck(match.matchId, accountId, playerName);
 
-                // Request OpenDota parse immediately (fire and forget)
                 if (this.openDotaClient) {
                   this.openDotaClient.requestParse(match.matchId).catch(() => {});
                 }
@@ -427,21 +424,22 @@ export class PollingService {
    */
   async checkRankChanges() {
     try {
-      // Get all players to check
-      const playersToCheck = this.friendsManager 
+      const playersToCheck = this.friendsManager
         ? this.friendsManager.getAllFriends()
         : [{ name: 'You', ids: [this.accountId] }];
+
+      logger.debug(`checkRankChanges: checking ${playersToCheck.length} player(s)`);
 
       for (const player of playersToCheck) {
         const playerName = player.name;
 
         try {
-          // Check ALL accounts and find the highest/most recent rank
           let bestRankData = null;
 
           for (const accountId of player.ids) {
             try {
               const rankData = await this.stratzClient.getPlayerRank(accountId);
+              logger.debug(`checkRankChanges: ${playerName} account ${accountId} -> rank=${rankData?.rank}, leaderboard=${rankData?.leaderboardRank}`);
               if (rankData && rankData.rank) {
                 if (!bestRankData || rankData.rank > bestRankData.rank) {
                   bestRankData = rankData;
@@ -454,6 +452,7 @@ export class PollingService {
           }
 
           if (!bestRankData || !bestRankData.rank) {
+            logger.debug(`checkRankChanges: ${playerName} -> no rank data found`);
             continue;
           }
 
@@ -597,85 +596,89 @@ export class PollingService {
    */
   async sendDailySummary() {
     try {
-      logger.info('Generating daily summary for all friends...');
-      
+      logger.info('=== DAILY SUMMARY START ===');
+
       // Get previous day range in UK time
       const { startTimestamp, endTimestamp, dateString } = this.getPreviousDayRange();
-      logger.info(`Time range: Previous day (${dateString} UK time)`);
-      logger.detailInfo(`From: ${new Date(startTimestamp * 1000).toISOString()} To: ${new Date(endTimestamp * 1000).toISOString()}`);
-      
+      logger.info(`Daily summary for: ${dateString} UK time`);
+      logger.info(`Time range: ${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()}`);
+
       const playerSummaries = [];
-      const allRampages = []; // Collect all rampages for separate notifications
+      const allRampages = [];
 
       // Get all friends or just the main account if no friends manager
-      const friends = this.friendsManager 
+      const friends = this.friendsManager
         ? this.friendsManager.getAllFriends()
         : [{ name: 'You', ids: [this.accountId] }];
 
-      logger.detailInfo(`Processing ${friends.length} player(s)...`);
+      logger.info(`Processing ${friends.length} player(s): [${friends.map(f => `${f.name}(${f.ids.join('/')})`).join(', ')}]`);
 
       // Process each friend
       for (const friend of friends) {
-        logger.detailInfo(`Checking player: ${friend.name}`);
+        logger.info(`--- Processing player: ${friend.name} (IDs: [${friend.ids.join(', ')}]) ---`);
         try {
           let bestAccountId = friend.ids[0];
           let recentMatches = [];
-      
+
           // For players with multiple IDs, check all accounts to find matches
           if (friend.ids.length > 1 && this.friendsManager) {
             let bestMatchCount = 0;
             let bestAccountMatches = [];
-            
+
+            logger.debug(`${friend.name}: multi-account player, checking ${friend.ids.length} accounts`);
             for (const accountId of friend.ids) {
               try {
-                // Use STRATZ's time-based query for efficiency
                 const matchesData = await this.stratzClient.getPlayerMatchesSince(accountId, startTimestamp, 50);
-                
-                // Filter matches to only include those within the previous day
-                const filteredMatches = matchesData.filter(m => 
+
+                const filteredMatches = matchesData.filter(m =>
                   m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
                 );
+
+                logger.debug(`${friend.name}: account ${accountId} -> ${matchesData.length} since start, ${filteredMatches.length} in day range`);
 
                 if (filteredMatches.length > bestMatchCount) {
                   bestMatchCount = filteredMatches.length;
                   bestAccountId = accountId;
                   bestAccountMatches = filteredMatches;
                 }
-                
-                // Small delay between account checks
+
                 await new Promise(resolve => setTimeout(resolve, 100));
               } catch (error) {
-                logger.warn(`Error checking account ${accountId} for ${friend.name}:`, error.message);
+                logger.warn(`Error checking account ${accountId} for ${friend.name}: ${error.message}`);
               }
             }
-            
+
             recentMatches = bestAccountMatches;
+            logger.debug(`${friend.name}: best account=${bestAccountId} with ${recentMatches.length} matches`);
           } else {
             // Single account - use time-based query
+            logger.debug(`${friend.name}: single account ${bestAccountId}, fetching matches`);
             const matchesData = await this.stratzClient.getPlayerMatchesSince(bestAccountId, startTimestamp, 50);
-            // Filter to only previous day
-            recentMatches = matchesData.filter(m => 
+            recentMatches = matchesData.filter(m =>
               m.startDateTime >= startTimestamp && m.startDateTime <= endTimestamp
             );
+            logger.debug(`${friend.name}: ${matchesData.length} since start, ${recentMatches.length} in day range`);
           }
-          
+
           // Skip if no matches
           if (recentMatches.length === 0) {
-            logger.detailInfo(`No matches found for ${friend.name} on ${dateString}`);
+            logger.info(`${friend.name}: NO MATCHES on ${dateString} - skipping`);
             continue;
           }
-          
-          logger.detailInfo(`Found ${recentMatches.length} matches for ${friend.name}`);
+
+          logger.info(`${friend.name}: Found ${recentMatches.length} match(es) on ${dateString} [IDs: ${recentMatches.map(m => m.id).join(', ')}]`);
 
           // Process daily summary for this player
           const summary = this.dataProcessor.processDailySummary(recentMatches);
-          
+          logger.debug(`${friend.name}: summary -> ${summary.totalMatches} matches, ${summary.wins}W/${summary.losses}L, WR=${summary.winRate}%`);
+
           // Get match IDs from recent matches
           const matchIds = recentMatches.map(m => m.id);
-          
+
           // Check for multi-kills using STRATZ feats + OpenDota fallback
           try {
             // Source 1: STRATZ feats
+            logger.debug(`${friend.name}: fetching STRATZ feats for account ${bestAccountId}`);
             const feats = await this.stratzClient.getPlayerAchievements(bestAccountId, 200);
             const multiKillFeats = this.stratzClient.getMultiKillFeatsFromMatches(feats, matchIds);
 
@@ -684,9 +687,9 @@ export class PollingService {
             summary.tripleKills = multiKillFeats.filter(f => f.type === 'TRIPLE_KILL').length;
 
             // Source 2: OpenDota fallback for missed multi-kills
-            // Daily summary runs on previous day, so matches should be parsed by now
             if (this.openDotaClient && (summary.rampages + summary.ultraKills + summary.tripleKills) === 0) {
-              for (const matchId of matchIds.slice(0, 10)) { // Check up to 10 matches
+              logger.debug(`${friend.name}: no STRATZ multi-kills, checking OpenDota fallback for ${Math.min(matchIds.length, 10)} matches`);
+              for (const matchId of matchIds.slice(0, 10)) {
                 try {
                   const odMatch = await this.openDotaClient.getMatch(matchId);
                   const result = odMatch ? this.openDotaClient.getMultiKillsForPlayer(odMatch, bestAccountId) : null;
@@ -695,7 +698,9 @@ export class PollingService {
                     summary.ultraKills += result.ultraKills;
                     summary.tripleKills += result.tripleKills;
                   }
-                } catch (e) { /* ignore individual match failures */ }
+                } catch (e) {
+                  logger.debug(`${friend.name}: OpenDota match ${matchId} check failed: ${e.message}`);
+                }
               }
             }
 
@@ -725,6 +730,7 @@ export class PollingService {
             logger.warn(`Error fetching feats for ${friend.name}:`, error.message);
           }
           
+          logger.info(`${friend.name}: ADDED to summary (${summary.totalMatches} matches, ${summary.wins}W-${summary.losses}L, ${summary.winRate}% WR)`);
           playerSummaries.push({
             name: friend.name,
             accountId: bestAccountId,
@@ -734,7 +740,7 @@ export class PollingService {
           // Small delay between players
           await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
-          logger.error(`Error processing daily summary for ${friend.name}:`, error);
+          logger.error(`Error processing daily summary for ${friend.name}: ${error.message}`, error.stack);
         }
       }
 
@@ -765,19 +771,28 @@ export class PollingService {
       }
 
       // Then send the daily summary
+      logger.info(`=== DAILY SUMMARY RESULTS: ${playerSummaries.length}/${friends.length} players had matches ===`);
+      if (playerSummaries.length > 0) {
+        logger.info(`Players in summary: [${playerSummaries.map(p => `${p.name}(${p.summary.totalMatches} matches)`).join(', ')}]`);
+      }
+      const skippedPlayers = friends.filter(f => !playerSummaries.some(p => p.name === f.name));
+      if (skippedPlayers.length > 0) {
+        logger.info(`Players skipped (no matches): [${skippedPlayers.map(f => f.name).join(', ')}]`);
+      }
+
       if (playerSummaries.length === 0) {
-        logger.info(`No matches on ${dateString} for any friend`);
         const embed = this.messageFormatter.formatMultiPlayerDailySummary([], dateString);
         await this.discordBot.sendNotification(null, embed);
+        logger.info('Sent empty daily summary (no matches)');
       } else {
         const embed = this.messageFormatter.formatMultiPlayerDailySummary(playerSummaries, dateString);
-        await this.discordBot.sendNotification(null, embed);
-        logger.info(`Daily summary sent for ${playerSummaries.length} player(s)`);
+        const sent = await this.discordBot.sendNotification(null, embed);
+        logger.info(`Daily summary sent: ${sent ? 'SUCCESS' : 'FAILED'} for ${playerSummaries.length} player(s)`);
       }
-      
-      // Update last daily summary timestamp
+
       this.stateCache.setLastDailySummary(new Date().toISOString());
       await this.stateCache.save();
+      logger.info('=== DAILY SUMMARY END ===');
     } catch (error) {
       logger.error('Error sending daily summary:', error);
       // Notify Discord that the daily summary failed

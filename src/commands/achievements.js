@@ -23,12 +23,13 @@ export const achievementsCommand = {
     }
 
     try {
-      // Fetch achievements from STRATZ
+      logger.debug(`/achievements: fetching feats for account ${accountId}`);
       const feats = await stratzClient.getPlayerAchievements(accountId);
 
       const achievements = dataProcessor.processAchievements(feats);
+      logger.debug(`/achievements: processed ${achievements.length} achievements`);
       const embed = messageFormatter.formatAchievements(achievements);
-      
+
       await interaction.editReply({ embeds: [embed] });
     } catch (error) {
       logger.error('Error executing achievements command:', error);

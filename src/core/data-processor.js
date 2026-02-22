@@ -45,9 +45,11 @@ export class DataProcessor {
    */
   processRecentMatches(matches) {
     if (!matches || !Array.isArray(matches)) {
+      logger.debug('processRecentMatches: input is null/not-array');
       return [];
     }
 
+    logger.debug(`processRecentMatches: processing ${matches.length} matches`);
     return matches.map((match) => {
       // STRATZ returns players filtered to the requested account
       const player = match.players?.[0] || {};
@@ -235,34 +237,37 @@ export class DataProcessor {
    */
   detectNewMatches(matches, accountId = null) {
     if (!matches || !Array.isArray(matches) || matches.length === 0) {
+      logger.debug(`detectNewMatches(${accountId}): no matches to check`);
       return [];
     }
 
-    // Use per-player tracking if accountId provided, otherwise fall back to global
-    const lastMatchId = accountId 
+    const lastMatchId = accountId
       ? this.stateCache.getLastMatchIdForPlayer(accountId)
       : this.stateCache.getLastMatchId();
-    
+
+    logger.debug(`detectNewMatches(${accountId}): lastMatchId=${lastMatchId}, newest=${matches[0]?.matchId}, oldest=${matches[matches.length - 1]?.matchId}`);
+
     if (!lastMatchId) {
-      // First run, cache the latest match
       if (accountId) {
         this.stateCache.setLastMatchIdForPlayer(accountId, matches[0].matchId);
       } else {
         this.stateCache.setLastMatchId(matches[0].matchId);
       }
+      logger.debug(`detectNewMatches(${accountId}): first run, cached ${matches[0].matchId}, returning 0 new`);
       return [];
     }
 
-    // Find matches newer than last cached
     const newMatches = matches.filter(match => match.matchId > lastMatchId);
-    
+
     if (newMatches.length > 0) {
-      // Update cache with latest match ID
       if (accountId) {
         this.stateCache.setLastMatchIdForPlayer(accountId, newMatches[0].matchId);
       } else {
         this.stateCache.setLastMatchId(newMatches[0].matchId);
       }
+      logger.debug(`detectNewMatches(${accountId}): ${newMatches.length} new match(es) [${newMatches.map(m => m.matchId).join(', ')}]`);
+    } else {
+      logger.debug(`detectNewMatches(${accountId}): no new matches`);
     }
 
     return newMatches;
@@ -287,6 +292,7 @@ export class DataProcessor {
    * Note: Rampage stats are added separately by the polling service after fetching feats
    */
   processDailySummary(matches) {
+    logger.debug(`processDailySummary: ${matches?.length || 0} matches input`);
     if (!matches || matches.length === 0) {
       return {
         totalMatches: 0,

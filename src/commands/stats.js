@@ -23,15 +23,15 @@ export const statsCommand = {
     }
 
     try {
-      // Fetch player data, win/loss, and recent matches for averages
+      logger.debug(`/stats: fetching data for account ${accountId}`);
       const [playerData, winLossData, recentMatches] = await Promise.all([
         stratzClient.getPlayerTotals(accountId),
         stratzClient.getPlayerWinLoss(accountId),
-        stratzClient.getRecentMatches(accountId, 20) // Get 20 recent matches for averages
+        stratzClient.getRecentMatches(accountId, 20)
       ]);
 
-      // Use the enhanced stats processor that calculates averages from recent matches
       const stats = dataProcessor.processPlayerStatsWithMatches(playerData, winLossData, recentMatches);
+      logger.debug(`/stats: W=${stats.wins}, L=${stats.losses}, WR=${stats.winRate}%`);
       const embed = messageFormatter.formatStats(stats);
 
       await interaction.editReply({ embeds: [embed] });

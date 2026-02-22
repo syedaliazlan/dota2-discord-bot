@@ -30,17 +30,18 @@ export const recentCommand = {
 
     try {
       const limit = interaction.options.getInteger('limit') || 5;
-      
-      // Fetch recent matches from STRATZ
+      logger.debug(`/recent: fetching ${limit} matches for account ${accountId}`);
+
       const matchesData = await stratzClient.getRecentMatches(accountId, limit);
 
       if (!matchesData || matchesData.length === 0) {
+        logger.debug(`/recent: no matches returned`);
         await interaction.editReply('No recent matches found.');
         return;
       }
 
-      // Process matches
       const matches = dataProcessor.processRecentMatches(matchesData);
+      logger.debug(`/recent: processed ${matches.length} matches`);
       const embed = messageFormatter.formatRecentMatches(matches, limit);
 
       await interaction.editReply({ embeds: [embed] });

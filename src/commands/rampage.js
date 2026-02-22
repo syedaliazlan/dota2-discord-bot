@@ -109,6 +109,7 @@ export const rampageCommand = {
       }
 
       const dayParam = interaction.options.getString('day');
+      logger.debug(`/rampage: dayParam=${dayParam || 'none'}`);
       const dayRange = this.parseDayParameter(dayParam);
 
       if (dayRange?.error) {
@@ -120,12 +121,13 @@ export const rampageCommand = {
       const allRampages = [];
 
       if (dayRange) {
-        // Filter by specific day - need to get matches and check which rampages fall in range
+        logger.info(`/rampage: searching for day ${dayRange.dateString}, range=${new Date(dayRange.startTimestamp * 1000).toISOString()} to ${new Date(dayRange.endTimestamp * 1000).toISOString()}`);
         await interaction.editReply(`🔍 Searching for rampages on ${dayRange.dateString}...`);
-        
+
         for (const friend of friends) {
           try {
             const accountId = friend.ids[0];
+            logger.debug(`/rampage: checking ${friend.name} (${accountId})`);
             
             // Get matches for this day
             const matchesData = await stratzClient.getPlayerMatchesSince(accountId, dayRange.startTimestamp, 50);

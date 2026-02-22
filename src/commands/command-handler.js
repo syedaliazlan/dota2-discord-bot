@@ -70,8 +70,9 @@ export class CommandHandler {
       }
 
       try {
-        logger.info(`Command received: /${interaction.commandName} from ${interaction.user.tag}`);
-        
+        const options = interaction.options?.data?.map(o => `${o.name}=${o.value}`).join(', ') || 'none';
+        logger.info(`Command received: /${interaction.commandName} from ${interaction.user.tag} [options: ${options}]`);
+
         // Execute command with STRATZ client
         if (interaction.commandName === 'profile') {
           await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.accountId);

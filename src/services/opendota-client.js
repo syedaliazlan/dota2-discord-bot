@@ -76,7 +76,14 @@ export class OpenDotaClient {
   async getMatch(matchId) {
     try {
       logger.debug(`OpenDota: Fetching match ${matchId}`);
-      return await this.request('get', `/matches/${matchId}`);
+      const data = await this.request('get', `/matches/${matchId}`);
+      if (data) {
+        const parsed = this.isMatchParsed(data);
+        logger.debug(`OpenDota: getMatch(${matchId}): found, parsed=${parsed}, players=${data.players?.length}`);
+      } else {
+        logger.debug(`OpenDota: getMatch(${matchId}): not found (null)`);
+      }
+      return data;
     } catch (error) {
       logger.warn(`OpenDota getMatch failed for ${matchId}: ${error.message}`);
       return null;
@@ -145,12 +152,13 @@ export class OpenDotaClient {
     const isParsed = this.isMatchParsed(matchData);
 
     if (!isParsed) {
-      // Match not parsed - multi_kills data not available
+      logger.debug(`OpenDota: match not parsed yet, multi_kills unavailable for player ${accountId}`);
       return null;
     }
 
     // Match is parsed - read multi_kills (may be empty object {} if no multi-kills)
     const multiKills = player.multi_kills || {};
+    logger.debug(`OpenDota: getMultiKillsForPlayer(${accountId}): multi_kills=${JSON.stringify(multiKills)}, hero=${player.hero_id}`);
 
     return {
       tripleKills: multiKills['3'] || 0,

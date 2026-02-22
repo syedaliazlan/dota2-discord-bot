@@ -58,7 +58,7 @@ export class FriendsManager {
    * Get all friends with their names and IDs (converted to Dota 2 Account IDs)
    */
   getAllFriends() {
-    return Object.entries(this.friendsList).map(([name, ids]) => {
+    const friends = Object.entries(this.friendsList).map(([name, ids]) => {
       const idArray = Array.isArray(ids) ? ids : [ids];
       const convertedIds = idArray.map(id => this.convertToDota2AccountId(String(id)));
       return {
@@ -66,6 +66,8 @@ export class FriendsManager {
         ids: convertedIds
       };
     });
+    logger.debug(`getAllFriends: returning ${friends.length} friends: [${friends.map(f => `${f.name}(${f.ids.join('/')})`).join(', ')}]`);
+    return friends;
   }
 
   /**

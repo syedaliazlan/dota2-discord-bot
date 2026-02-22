@@ -23,16 +23,17 @@ export const profileCommand = {
     }
 
     try {
-      // Fetch data from STRATZ
+      logger.debug(`/profile: fetching data for account ${accountId}`);
       const playerData = await stratzClient.getPlayer(accountId);
 
       if (!playerData) {
+        logger.warn(`/profile: no data returned for account ${accountId}`);
         await interaction.editReply('Failed to fetch profile data. Please try again later.');
         return;
       }
 
-      // Process and format
       const profile = dataProcessor.processPlayerProfile(playerData);
+      logger.debug(`/profile: name=${profile.name}, rank=${profile.rankTier}, matches=${profile.matchCount}`);
       const embed = messageFormatter.formatProfile(profile);
 
       await interaction.editReply({ embeds: [embed] });

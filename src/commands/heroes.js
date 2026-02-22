@@ -30,16 +30,18 @@ export const heroesCommand = {
 
     try {
       const limit = interaction.options.getInteger('limit') || 10;
-      
-      // Fetch hero stats from STRATZ
+      logger.debug(`/heroes: fetching for account ${accountId}, limit=${limit}`);
+
       const heroesData = await stratzClient.getPlayerHeroes(accountId);
 
       if (!heroesData || heroesData.length === 0) {
+        logger.debug(`/heroes: no hero data returned`);
         await interaction.editReply('No hero statistics available.');
         return;
       }
 
       const heroes = dataProcessor.processHeroStats(heroesData);
+      logger.debug(`/heroes: processed ${heroes.length} heroes, showing top ${limit}`);
       const embed = messageFormatter.formatHeroes(heroes, limit);
 
       await interaction.editReply({ embeds: [embed] });

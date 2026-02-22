@@ -280,7 +280,9 @@ export class StratzClient {
     `;
 
     const data = await this.query(query, { steamAccountId: parseInt(accountId) });
-    return data?.player;
+    const player = data?.player;
+    logger.debug(`getPlayer(${accountId}): ${player ? `name=${player.steamAccount?.name}, rank=${player.steamAccount?.seasonRank}` : 'null'}`);
+    return player;
   }
 
   /**
@@ -318,12 +320,14 @@ export class StratzClient {
       }
     `;
 
-    const data = await this.query(query, { 
+    const data = await this.query(query, {
       steamAccountId: parseInt(accountId),
       take: limit
     });
-    
-    return data?.player?.matches || [];
+
+    const matches = data?.player?.matches || [];
+    logger.debug(`getRecentMatches(${accountId}, limit=${limit}): returned ${matches.length} matches${matches.length > 0 ? `, IDs: [${matches.map(m => m.id).join(', ')}]` : ''}`);
+    return matches;
   }
 
   /**
@@ -364,15 +368,19 @@ export class StratzClient {
       }
     `;
 
-    const data = await this.query(query, { 
+    const data = await this.query(query, {
       steamAccountId: parseInt(accountId),
       take: limit
     });
-    
-    const matches = data?.player?.matches || [];
-    
-    // Filter matches to only include those after sinceTimestamp
-    return matches.filter(match => match.startDateTime >= sinceTimestamp);
+
+    const allMatches = data?.player?.matches || [];
+    const filtered = allMatches.filter(match => match.startDateTime >= sinceTimestamp);
+    logger.debug(`getPlayerMatchesSince(${accountId}, since=${new Date(sinceTimestamp * 1000).toISOString()}): API returned ${allMatches.length} matches, ${filtered.length} after filter`);
+    if (filtered.length > 0) {
+      logger.debug(`  Match IDs: [${filtered.map(m => m.id).join(', ')}]`);
+      logger.debug(`  Time range: ${new Date(filtered[filtered.length - 1].startDateTime * 1000).toISOString()} to ${new Date(filtered[0].startDateTime * 1000).toISOString()}`);
+    }
+    return filtered;
   }
 
   /**
@@ -394,6 +402,7 @@ export class StratzClient {
     `;
 
     const data = await this.query(query, { steamAccountId: parseInt(accountId) });
+    logger.debug(`getPlayerTotals(${accountId}): matchCount=${data?.player?.matchCount}, winCount=${data?.player?.winCount}`);
     return data?.player;
   }
 
@@ -413,13 +422,16 @@ export class StratzClient {
     `;
 
     const data = await this.query(query, { steamAccountId: parseInt(accountId) });
-    
+
     if (data?.player) {
-      return {
+      const result = {
         win: data.player.winCount,
         lose: data.player.matchCount - data.player.winCount
       };
+      logger.debug(`getPlayerWinLoss(${accountId}): W=${result.win}, L=${result.lose}`);
+      return result;
     }
+    logger.debug(`getPlayerWinLoss(${accountId}): no data returned`);
     return null;
   }
 
@@ -444,7 +456,9 @@ export class StratzClient {
     `;
 
     const data = await this.query(query, { steamAccountId: parseInt(accountId) });
-    return data?.player?.heroesPerformance || [];
+    const heroes = data?.player?.heroesPerformance || [];
+    logger.debug(`getPlayerHeroes(${accountId}): returned ${heroes.length} heroes`);
+    return heroes;
   }
 
   /**
@@ -469,6 +483,7 @@ export class StratzClient {
     `;
 
     const data = await this.query(query, { steamAccountId: parseInt(accountId) });
+    logger.debug(`getPlayerRankings(${accountId}): rank=${data?.player?.steamAccount?.seasonRank}, leaderboard=${data?.player?.steamAccount?.seasonLeaderboardRank}`);
     return data?.player;
   }
 
@@ -524,7 +539,9 @@ export class StratzClient {
     `;
 
     const data = await this.query(query, { matchId: parseInt(matchId) });
-    return data?.match;
+    const match = data?.match;
+    logger.debug(`getMatch(${matchId}): ${match ? `found, players=${match.players?.length}, duration=${match.durationSeconds}s` : 'not found'}`);
+    return match;
   }
 
   /**
@@ -559,7 +576,9 @@ export class StratzClient {
     `;
 
     const data = await this.query(query, { matchIds: matchIds.map(id => parseInt(id)) });
-    return data?.matches || [];
+    const matches = data?.matches || [];
+    logger.debug(`getMatches(${matchIds.length} IDs): returned ${matches.length} matches`);
+    return matches;
   }
 
   // ==================== Live Queries ====================
@@ -590,7 +609,9 @@ export class StratzClient {
     `;
 
     const data = await this.query(query);
-    return data?.live?.matches || [];
+    const matches = data?.live?.matches || [];
+    logger.debug(`getLiveMatches(): returned ${matches.length} live matches`);
+    return matches;
   }
 
   /**
@@ -699,17 +720,20 @@ export class StratzClient {
 
     const data = await this.query(query, { steamAccountId: parseInt(accountId) });
     const player = data?.player;
-    
+
     if (!player?.steamAccount) {
+      logger.debug(`getPlayerRank(${accountId}): no steam account data`);
       return null;
     }
-    
-    return {
+
+    const result = {
       accountId: player.steamAccountId,
       name: player.steamAccount.name,
       rank: player.steamAccount.seasonRank,
       leaderboardRank: player.steamAccount.seasonLeaderboardRank
     };
+    logger.debug(`getPlayerRank(${accountId}): name=${result.name}, rank=${result.rank}, leaderboard=${result.leaderboardRank}`);
+    return result;
   }
 
   /**
@@ -819,6 +843,7 @@ export class StratzClient {
       }
     });
 
+    logger.debug(`getMultiKillsFromFeats: checked ${feats.length} feats against ${matchIds.length} matches -> rampages=${result.rampages}, ultra=${result.ultraKills}, triple=${result.tripleKills}`);
     return result;
   }
 
@@ -846,11 +871,17 @@ export class StratzClient {
     const matchIdSet = new Set(matchIds.map(id => parseInt(id)));
     const multiKillTypes = new Set(['TRIPLE_KILL', 'ULTRA_KILL', 'RAMPAGE']);
 
-    return feats
+    const result = feats
       .map(feat => ({ ...feat, type: this.normalizeFeatType(feat.type) }))
       .filter(feat =>
         multiKillTypes.has(feat.type) && matchIdSet.has(feat.matchId)
       );
+
+    logger.debug(`getMultiKillFeatsFromMatches: checked ${feats.length} feats against ${matchIds.length} match IDs -> found ${result.length} multi-kill feats`);
+    if (result.length > 0) {
+      result.forEach(f => logger.debug(`  feat: type=${f.type}, matchId=${f.matchId}, heroId=${f.heroId}`));
+    }
+    return result;
   }
 
   // ==================== Feat Type Normalization ====================
@@ -929,7 +960,9 @@ export class StratzClient {
     `;
 
     const data = await this.query(query, { matchId: parseInt(matchId) });
-    return data?.match;
+    const match = data?.match;
+    logger.debug(`getMatchWithKillEvents(${matchId}): ${match ? `found, ${match.players?.length} players` : 'not found'}`);
+    return match;
   }
 
   /**

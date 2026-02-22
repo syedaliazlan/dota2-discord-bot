@@ -29,21 +29,23 @@ export const matchCommand = {
 
     try {
       const matchId = interaction.options.getString('id');
-      
+      logger.debug(`/match: looking up match ${matchId}`);
+
       if (!matchId || isNaN(matchId)) {
         await interaction.editReply('Invalid match ID. Please provide a valid numeric match ID.');
         return;
       }
 
-      // Fetch match from STRATZ
       const matchData = await stratzClient.getMatch(matchId);
 
       if (!matchData) {
+        logger.debug(`/match: match ${matchId} not found`);
         await interaction.editReply('Match not found. Please check the match ID.');
         return;
       }
 
       const match = dataProcessor.processMatchDetails(matchData);
+      logger.debug(`/match: ${matchId} -> duration=${match.duration}s, mode=${match.gameMode}`);
       const embed = messageFormatter.formatMatch(match);
 
       await interaction.editReply({ embeds: [embed] });

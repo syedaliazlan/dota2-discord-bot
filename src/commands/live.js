@@ -22,19 +22,22 @@ export const liveCommand = {
     }
 
     try {
-      // Fetch all live matches once
+      logger.debug(`/live: fetching live matches`);
       const liveMatches = await stratzClient.getLiveMatches();
 
       if (!liveMatches || liveMatches.length === 0) {
+        logger.debug(`/live: no live matches on STRATZ`);
         await interaction.editReply('No live matches found on STRATZ right now.');
         return;
       }
 
-      // Get all players to check
+      logger.debug(`/live: ${liveMatches.length} total live matches on STRATZ`);
+
       const playersToCheck = friendsManager
         ? friendsManager.getAllFriends()
         : [{ name: 'You', ids: [accountId] }];
 
+      logger.debug(`/live: checking ${playersToCheck.length} player(s)`);
       const foundLive = [];
 
       for (const player of playersToCheck) {
@@ -58,9 +61,12 @@ export const liveCommand = {
       }
 
       if (foundLive.length === 0) {
+        logger.debug(`/live: no tracked players found in live matches`);
         await interaction.editReply('No tracked players are currently in a live match.');
         return;
       }
+
+      logger.info(`/live: found ${foundLive.length} player(s) in live matches: [${foundLive.map(l => l.name).join(', ')}]`);
 
       const embed = new EmbedBuilder()
         .setTitle(`🔴 ${foundLive.length} Live Match${foundLive.length > 1 ? 'es' : ''} Found`)
