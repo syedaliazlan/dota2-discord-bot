@@ -8,45 +8,21 @@ import { logger } from '../utils/logger.js';
 export const dailyallCommand = {
   data: new SlashCommandBuilder()
     .setName('dailyall')
-    .setDescription('Show daily summary for all tracked players (previous day UK time)'),
+    .setDescription('Show daily summary for all tracked players (last 20 hours)'),
 
   /**
-   * Get the previous day's time range in UK time (Europe/London)
+   * Get the time range for the last 20 hours from current time
    */
-  getPreviousDayRange() {
+  getLast20HoursRange() {
     const now = new Date();
+    const endTimestamp = Math.floor(now.getTime() / 1000);
+    const startTimestamp = endTimestamp - (20 * 60 * 60); // 20 hours ago
 
-    const ukFormatter = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Europe/London',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    });
-
-    const ukParts = ukFormatter.formatToParts(now);
-    const ukYear = parseInt(ukParts.find(p => p.type === 'year').value);
-    const ukMonth = parseInt(ukParts.find(p => p.type === 'month').value) - 1;
-    const ukDay = parseInt(ukParts.find(p => p.type === 'day').value);
-
-    const yesterdayUK = new Date(Date.UTC(ukYear, ukMonth, ukDay - 1));
-
-    const startOfYesterday = new Date(yesterdayUK);
-    startOfYesterday.setUTCHours(0, 0, 0, 0);
-
-    const ukString = startOfYesterday.toLocaleString('en-GB', { timeZone: 'Europe/London', timeZoneName: 'short' });
-    const ukOffset = ukString.includes('BST') ? 60 : 0;
-    startOfYesterday.setTime(startOfYesterday.getTime() - ukOffset * 60 * 1000);
-
-    const endOfYesterday = new Date(startOfYesterday);
-    endOfYesterday.setTime(endOfYesterday.getTime() + (24 * 60 * 60 * 1000) - 1000);
-
-    // Format date from the correctly-rolled-back yesterdayUK date
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const dateString = `${yesterdayUK.getUTCDate()}-${months[yesterdayUK.getUTCMonth()]}-${yesterdayUK.getUTCFullYear()}`;
+    const dateString = 'Last 20 hours';
 
     return {
-      startTimestamp: Math.floor(startOfYesterday.getTime() / 1000),
-      endTimestamp: Math.floor(endOfYesterday.getTime() / 1000),
+      startTimestamp,
+      endTimestamp,
       dateString
     };
   },
@@ -69,9 +45,9 @@ export const dailyallCommand = {
         return;
       }
 
-      const { startTimestamp, endTimestamp, dateString } = this.getPreviousDayRange();
+      const { startTimestamp, endTimestamp, dateString } = this.getLast20HoursRange();
       logger.info(`/dailyall: date=${dateString}, range=${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()}`);
-      await interaction.editReply(`⏳ Generating daily summary for ${dateString} (UK time)... This may take a moment.`);
+      await interaction.editReply(`⏳ Generating daily summary for ${dateString}... This may take a moment.`);
 
       const playerSummaries = [];
       const allRampages = [];

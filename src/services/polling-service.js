@@ -518,54 +518,19 @@ export class PollingService {
   }
 
   /**
-   * Get the previous day's time range in UK time (Europe/London)
+   * Get the time range for the last 20 hours from current UK time
    * Returns { startTimestamp, endTimestamp, dateString } in Unix seconds
    */
-  getPreviousDayRange() {
-    // Get current date in UK time
+  getLast20HoursRange() {
     const now = new Date();
-    
-    // Create formatter for UK timezone to get the current date parts
-    const ukFormatter = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Europe/London',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    });
-    
-    // Parse the UK date
-    const ukParts = ukFormatter.formatToParts(now);
-    const ukYear = parseInt(ukParts.find(p => p.type === 'year').value);
-    const ukMonth = parseInt(ukParts.find(p => p.type === 'month').value) - 1; // 0-indexed
-    const ukDay = parseInt(ukParts.find(p => p.type === 'day').value);
-    
-    // Create yesterday's date in UK time
-    const yesterdayUK = new Date(Date.UTC(ukYear, ukMonth, ukDay - 1));
-    
-    // Calculate start of yesterday (00:00:00 UK time)
-    // UK timezone offset varies (GMT/BST), so we need to account for it
-    const startOfYesterday = new Date(yesterdayUK);
-    startOfYesterday.setUTCHours(0, 0, 0, 0);
-    
-    // Adjust for UK timezone offset
-    // Get the offset for yesterday's date
-    const ukOffset = this.getUKOffset(startOfYesterday);
-    startOfYesterday.setTime(startOfYesterday.getTime() - ukOffset * 60 * 1000);
-    
-    // End of yesterday (23:59:59 UK time)
-    const endOfYesterday = new Date(startOfYesterday);
-    endOfYesterday.setTime(endOfYesterday.getTime() + (24 * 60 * 60 * 1000) - 1000);
-    
-    // Format date from the correctly-rolled-back yesterdayUK date
-    const dateString = this.formatDateString(
-      yesterdayUK.getUTCDate(),
-      yesterdayUK.getUTCMonth(),
-      yesterdayUK.getUTCFullYear()
-    );
-    
+    const endTimestamp = Math.floor(now.getTime() / 1000);
+    const startTimestamp = endTimestamp - (20 * 60 * 60); // 20 hours ago
+
+    const dateString = 'Last 20 hours';
+
     return {
-      startTimestamp: Math.floor(startOfYesterday.getTime() / 1000),
-      endTimestamp: Math.floor(endOfYesterday.getTime() / 1000),
+      startTimestamp,
+      endTimestamp,
       dateString
     };
   }
@@ -598,9 +563,9 @@ export class PollingService {
     try {
       logger.info('=== DAILY SUMMARY START ===');
 
-      // Get previous day range in UK time
-      const { startTimestamp, endTimestamp, dateString } = this.getPreviousDayRange();
-      logger.info(`Daily summary for: ${dateString} UK time`);
+      // Get last 20 hours range from current UK time
+      const { startTimestamp, endTimestamp, dateString } = this.getLast20HoursRange();
+      logger.info(`Daily summary for: ${dateString}`);
       logger.info(`Time range: ${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()}`);
 
       const playerSummaries = [];
