@@ -8,17 +8,17 @@ import { logger } from '../utils/logger.js';
 export const dailyallCommand = {
   data: new SlashCommandBuilder()
     .setName('dailyall')
-    .setDescription('Show daily summary for all tracked players (last 20 hours)'),
+    .setDescription('Show daily summary for all tracked players (last 24 hours)'),
 
   /**
-   * Get the time range for the last 20 hours from current time
+   * Get the time range for the last 24 hours from current time
    */
-  getLast20HoursRange() {
+  getLast24HoursRange() {
     const now = new Date();
     const endTimestamp = Math.floor(now.getTime() / 1000);
-    const startTimestamp = endTimestamp - (20 * 60 * 60); // 20 hours ago
+    const startTimestamp = endTimestamp - (24 * 60 * 60); // 24 hours ago
 
-    const dateString = 'Last 20 hours';
+    const dateString = 'Last 24 hours';
 
     return {
       startTimestamp,
@@ -45,7 +45,7 @@ export const dailyallCommand = {
         return;
       }
 
-      const { startTimestamp, endTimestamp, dateString } = this.getLast20HoursRange();
+      const { startTimestamp, endTimestamp, dateString } = this.getLast24HoursRange();
       logger.info(`/dailyall: date=${dateString}, range=${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()}`);
       await interaction.editReply(`⏳ Generating daily summary for ${dateString}... This may take a moment.`);
 

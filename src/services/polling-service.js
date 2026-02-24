@@ -518,15 +518,15 @@ export class PollingService {
   }
 
   /**
-   * Get the time range for the last 20 hours from current UK time
+   * Get the time range for the last 24 hours from current UK time
    * Returns { startTimestamp, endTimestamp, dateString } in Unix seconds
    */
-  getLast20HoursRange() {
+  getLast24HoursRange() {
     const now = new Date();
     const endTimestamp = Math.floor(now.getTime() / 1000);
-    const startTimestamp = endTimestamp - (20 * 60 * 60); // 20 hours ago
+    const startTimestamp = endTimestamp - (24 * 60 * 60); // 24 hours ago
 
-    const dateString = 'Last 20 hours';
+    const dateString = 'Last 24 hours';
 
     return {
       startTimestamp,
@@ -563,8 +563,8 @@ export class PollingService {
     try {
       logger.info('=== DAILY SUMMARY START ===');
 
-      // Get last 20 hours range from current UK time
-      const { startTimestamp, endTimestamp, dateString } = this.getLast20HoursRange();
+      // Get last 24 hours range from current UK time
+      const { startTimestamp, endTimestamp, dateString } = this.getLast24HoursRange();
       logger.info(`Daily summary for: ${dateString}`);
       logger.info(`Time range: ${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()}`);
 
