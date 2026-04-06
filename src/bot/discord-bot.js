@@ -12,7 +12,9 @@ export class DiscordBot {
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        // Required by @discordjs/voice — see https://discordjs.guide/voice/voice-connections
+        GatewayIntentBits.GuildVoiceStates
       ]
     });
     this.commands = new Collection();

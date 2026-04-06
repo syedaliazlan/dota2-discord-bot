@@ -12,6 +12,7 @@ import { listfriendsCommand } from './listfriends.js';
 import { dailyallCommand } from './dailyall.js';
 import { rampageCommand } from './rampage.js';
 import { metaCommand } from './meta.js';
+import { entranceCommand } from './entrance.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -19,7 +20,7 @@ import { logger } from '../utils/logger.js';
  * Updated to use STRATZ API
  */
 export class CommandHandler {
-  constructor(discordBot, stratzClient, dataProcessor, messageFormatter, accountId, friendsManager = null, heroMap = null, openDotaClient = null) {
+  constructor(discordBot, stratzClient, dataProcessor, messageFormatter, accountId, friendsManager = null, heroMap = null, openDotaClient = null, entranceStore = null, entranceVoice = null) {
     this.discordBot = discordBot;
     this.stratzClient = stratzClient;
     this.dataProcessor = dataProcessor;
@@ -28,6 +29,8 @@ export class CommandHandler {
     this.friendsManager = friendsManager;
     this.heroMap = heroMap;
     this.openDotaClient = openDotaClient;
+    this.entranceStore = entranceStore;
+    this.entranceVoice = entranceVoice;
 
     this.setupCommands();
     this.setupInteractionHandler();
@@ -50,6 +53,7 @@ export class CommandHandler {
     this.discordBot.registerCommand(dailyallCommand);
     this.discordBot.registerCommand(rampageCommand);
     this.discordBot.registerCommand(metaCommand);
+    this.discordBot.registerCommand(entranceCommand);
 
     logger.info(`Registered ${this.discordBot.getCommands().size} commands`);
   }
@@ -99,6 +103,12 @@ export class CommandHandler {
           await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter, this.friendsManager, this.heroMap);
         } else if (interaction.commandName === 'meta') {
           await command.execute(interaction, this.stratzClient, this.dataProcessor, this.messageFormatter);
+        } else if (interaction.commandName === 'entrance') {
+          if (!this.entranceStore || !this.entranceVoice) {
+            await interaction.reply({ content: 'Entrance sounds are not initialized.', ephemeral: true });
+            return;
+          }
+          await command.execute(interaction, this.entranceStore, this.entranceVoice);
         }
       } catch (error) {
         logger.error(`Error executing command ${interaction.commandName}:`, error);

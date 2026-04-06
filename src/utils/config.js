@@ -98,6 +98,9 @@ export function loadConfig() {
     cache: {
       file: process.env.CACHE_FILE || './data/state-cache.json'
     },
+    entrance: {
+      soundsFile: process.env.ENTRANCE_SOUNDS_FILE || './data/entrance-sounds.json'
+    },
     friends: friendsList,
     dailySummary: {
       weekdayTime: weekdayTime,

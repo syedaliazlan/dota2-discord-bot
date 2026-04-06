@@ -10,6 +10,10 @@ import { loadHeroesFromAPI } from './utils/hero-loader.js';
 import { CommandHandler } from './commands/command-handler.js';
 import { PollingService } from './services/polling-service.js';
 import { FriendsManager } from './utils/friends-manager.js';
+import { EntranceSoundStore } from './utils/entrance-sound-store.js';
+import { EntranceVoiceService } from './services/entrance-voice-service.js';
+import { registerEntranceVoiceHandler } from './bot/entrance-voice-handler.js';
+import { getVoiceConnection } from '@discordjs/voice';
 
 /**
  * Main application entry point
@@ -100,6 +104,12 @@ async function main() {
     await discordBot.waitForReady();
     logger.info('Discord bot is ready!');
 
+    const entranceStore = new EntranceSoundStore(config.entrance.soundsFile);
+    await entranceStore.load();
+    const entranceVoice = new EntranceVoiceService();
+    entranceVoice.logDependencyReport();
+    registerEntranceVoiceHandler(discordBot.getClient(), entranceStore, entranceVoice);
+
     // Initialize command handler
     logger.info('Initializing command handler...');
     const commandHandler = new CommandHandler(
@@ -110,7 +120,9 @@ async function main() {
       config.steam.accountId,
       friendsManager,
       heroMap,
-      openDotaClient
+      openDotaClient,
+      entranceStore,
+      entranceVoice
     );
 
     // Register slash commands with Discord
@@ -143,6 +155,17 @@ async function main() {
       logger.info(`Received ${signal}, shutting down gracefully...`);
       
       pollingService.stop();
+      entranceVoice.destroyAll();
+      for (const guildId of discordBot.getClient().guilds.cache.keys()) {
+        const vc = getVoiceConnection(guildId);
+        if (vc) {
+          try {
+            vc.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      }
       await stateCache.save();
       await discordBot.destroy();
       
