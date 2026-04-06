@@ -8,13 +8,15 @@ import { EntranceVoiceService } from '../services/entrance-voice-service.js';
 
 const MAX_DURATION_SEC = 10;
 
-function hasManageServer(interaction) {
-  const perms = interaction.memberPermissions;
-  if (!perms) return false;
-  return (
-    perms.has(PermissionFlagsBits.Administrator) ||
-    perms.has(PermissionFlagsBits.ManageGuild)
-  );
+function isEntranceAdmin(interaction) {
+  // Strongest rule: explicit user id from env.
+  const configuredAdminId = process.env.ENTRANCE_ADMIN_USER_ID?.trim();
+  if (configuredAdminId) {
+    return interaction.user.id === configuredAdminId;
+  }
+
+  // Fallback: server owner only.
+  return interaction.guild && interaction.user.id === interaction.guild.ownerId;
 }
 
 function isAllowedAttachment(att) {
@@ -104,9 +106,9 @@ export const entranceCommand = {
       return;
     }
 
-    if (!hasManageServer(interaction)) {
+    if (!isEntranceAdmin(interaction)) {
       await interaction.reply({
-        content: 'You need **Manage Server** or **Administrator** to use this command.',
+        content: 'Only the configured entrance admin can use this command.',
         ephemeral: true
       });
       return;
